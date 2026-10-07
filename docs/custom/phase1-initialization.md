@@ -19,8 +19,8 @@
 - origin fetch/push：用户私有仓库；upstream fetch：原作者，push URL 配置为 `DISABLED` 防误推。
 - Git 身份仅配置在本仓库：Codex / codex@local.invalid。GitHub 凭据助手复用现有官方 CLI 登录，不在文件中保存令牌。
 - `remote.pushDefault` 和 `branch.main.pushRemote` 均为 origin。
-- **Baseline pushed：NO。截至本报告保存时，上传连接被重置，GitHub REST 核验返回 Repository is empty。**
-- **Remote backup status：未完成，不能把仓库已创建当成源码已远程备份。** workflow 补充授权已完成并核验，无需再次授权；下一步解决 Git 上传连接重置，再核验 main、标签和独立远程恢复。
+- **Baseline pushed：YES。main 与 upstream-baseline 已实际正常推送，包含完整原始 main 历史和所有原始标签。**
+- **Remote backup status：已完成。** workflow 补充授权已完成；首次整体上传连接重置，通过先上传原始首提交、再正常快进 main 解决，没有强推或改写历史。远程 main 与本地 61192361452960d8ab78c8dfdc90bf15cbe993e8 实际一致，标签解引用为原始上游 SHA；已从 PRIVATE origin 独立 clone，HEAD 一致、main干净、fsck通过，1029提交（1027上游+2初始化文档提交）。报告收尾后续只新增状态文档提交，再次 push/hash 核验。
 - 已建立独立于项目目录的本地完整 bundle：父目录 `.tools/backups/tick-stock-panel-custom-20261007.bundle`，28,740,892 bytes，保存初始化提交 `930eb1acc7221e83cfe23e41f20055fa6ed50841`、59 refs 与完整历史。bundle verify 成功；实际新目录 clone、HEAD 一致、main 工作区干净、fsck 无损坏、原始标签 dereference 与上游 SHA 一致。fsck 的两个 dangling commit 是 clone 未映射的其他上游分支对象，不是完整性错误。SHA256：`64118314D08C1D382C033A4036760A0E569CF6E496B1D2925EC255DF89D88FA0`。这仅是本机恢复验证，不能抵御整机/磁盘损失，不代替 GitHub 备份。
 - 自动 Actions 在首次导入前通过仓库设置暂停，避免上游 docker.yml 在 main push 时自动发布镜像。上游文件保留；本地验证不等于远程 CI 已运行。
 
@@ -84,14 +84,14 @@ Windows 跨盘安装中 pnpm 一度停滞；只停止本次安装会话，以缓
 | 浏览器完整交互/付费行情/AI/实盘 | NOT RUN | 启动冒烟与静态首页 HTTP 检查不等于所有页面和付费能力验收；未使用私人数据或凭证 |
 | Docker build/部署/远程 CI | NOT RUN | 本阶段无部署任务，daemon 未验收，Actions 暂停 |
 | 本地 bundle 恢复 | PASS | 独立目录 clone、初始化 HEAD/原始标签一致、fsck 无损坏，完整历史已验证 |
-| 私有远程恢复 | NOT RUN | 推送未成功，远程仍空，不能进行有效远程 clone 恢复验证 |
+| 私有远程恢复 | PASS | PRIVATE origin 实际独立 clone，HEAD/原始标签核对、main干净、fsck通过；原始历史已保留 |
 
 首轮 pytest 设置 DATA_DIR 环境变量覆盖了测试自行构造的 Settings，导致一项临时目录断言失败；移除该覆盖后定向两项通过、完整复验上述通过。一次沙箱权限受限执行不作为产品测试结论。前端最初把 node:test 文件交给 Vitest 报无 suite；对照源代码后按真实运行器分开全部通过。build 仅产生已跟踪 vite.config.d.ts 的换行差异，已恢复本次生成的差异，未保留核心改动。
 
 ## Risks
 
-1. 当前 GitHub 仓库已创建但无代码：上传 RPC/连接重置，尚未完成灾难恢复备份。自动审批服务反复断线还阻碍部分重试，不能宣称 push 成功。
-2. 最初缺 workflow OAuth 范围；用户补充授权后 CLI 核验 repo/read:org/gist/workflow 已存在，此授权问题已经解决，无需重复登录。授权后连接重置仍存在，不能再把授权不足作为当前阻塞。workflow 用途参见 GitHub 官方说明：https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps 。
+1. 首次 Git 大包上传连接重置已通过分批原始提交→main快进成功解决，当前远程备份与恢复验证已完成。审批服务曾反复断线，后续如出现失败仍需核验远程SHA，不能因客户端文字误判成功。
+2. 最初缺 workflow OAuth 范围；用户补充授权后 CLI 核验 repo/read:org/gist/workflow 已存在，此问题已解决，无需重复登录。workflow 用途参见 GitHub 官方说明：https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps 。
 3. 两项 lint 未通过，不应称全面绿色稳定基线；按初始化限制暂不擅自改业务/工具链。实际金融能力仍取决于 Provider 和凭据。
 4. `backend/app/data_providers/custom/provider.py:_normalize_pct_units` 未声明 pct_unit 的 change_pct 仍存在 median/max 推断；amplitude/turnover_rate 未声明置空。README 的全面 fail-closed 描述不完全符合实现。新增自定义源必须声明 pct_unit，并为边界写测试，本阶段不修上游行为。
 5. 分钟标准化守卫仍含对 naive UTC 特征的兜底纠偏；新源必须源头明确时区，不能依赖猜测。扩展上下文与文档目标接口范围有限。
@@ -135,7 +135,7 @@ git worktree add --detach <另一个新目录> upstream-baseline
 
 Git config 不随 clone 恢复，需重新设远程防护/身份/凭据助手；凭证重新授权，运行数据另行恢复。原始 baseline worktree 仍需安装依赖；不能把 checkout 当作数据恢复。
 
-远程尚未完成时，本机已有 bundle 可在另一个新目录恢复：`git clone --branch main <父目录>/.tools/backups/tick-stock-panel-custom-20261007.bundle <新目录>`。该恢复已实际验证，快照为 930eb1a；当前 Git 仓库可能有后续文档提交，恢复前核对快照与所需版本，不覆盖当前目录。
+本机已有 bundle 也可在另一个新目录恢复：`git clone --branch main <父目录>/.tools/backups/tick-stock-panel-custom-20261007.bundle <新目录>`。该恢复已实际验证，快照为 930eb1a；远程已保存更新的文档提交，恢复前核对快照与所需版本，不覆盖当前目录。
 
 ### 同步上游
 
