@@ -57,6 +57,26 @@ data/**
 .env.*.local
 backend/.env
 
+# Custom development: secrets and standalone runtime databases
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+token.json
+tokens.json
+secrets.json
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite*-wal
+*.sqlite*-shm
+*.sqlite*-journal
+
 # ===== User-derived prompts =====
 backend/user_prompts/
 
