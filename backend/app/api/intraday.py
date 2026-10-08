@@ -113,6 +113,29 @@ def index_quotes(
     return {"rows": rows, "count": len(rows), "source": "realtime"}
 
 
+@router.get("/quotes")
+def quote_snapshots(
+    request: Request,
+    symbols: str | None = Query(None, description="逗号分隔的完整 symbol; 只读缓存, 不请求数据源"),
+):
+    """基础行情读取: CN 保持兼容报价字段, HK/US 不依赖 enriched。
+
+    港美无指标、量单位未支持; age_ms 来自行情戳, 不代表市场是否开市。
+    """
+    qs = _get_quote_service(request)
+    rows = []
+    if qs:
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()] if symbols else None
+        if symbol_list is None or any(s.endswith((".SH", ".SZ", ".BJ")) for s in symbol_list):
+            df = qs.get_quotes_compat()
+            rows = df.to_dicts() if not df.is_empty() else []
+            if symbol_list is not None:
+                wanted = set(symbol_list)
+                rows = [row for row in rows if row["symbol"] in wanted]
+        rows.extend(qs.get_non_cn_quotes(symbol_list))
+    return {"rows": rows, "count": len(rows)}
+
+
 @router.get("/stream")
 async def quote_stream(request: Request):
     """SSE 端点: 行情更新 + 告警推送 + 五档修正 + 复盘进度。

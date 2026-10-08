@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -220,6 +221,8 @@ class QuoteService:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        # 港美基础快照只在内存逐 symbol 合并, 不接 CN enriched 或任何 Parquet。
+        self._non_cn_quotes: dict[str, dict] = {}
         # 串行化行情拉取: 手动 POST /refresh 与后台轮询线程可能并发调用
         # _fetch_quotes, 两者同时写同一批 parquet/缓存会互相覆盖
         self._fetch_lock = threading.Lock()
@@ -551,6 +554,21 @@ class QuoteService:
             df = df.with_columns(pl.col("close").alias("last_price"))
         return df
 
+    def get_non_cn_quotes(self, symbols: list[str] | None = None) -> list[dict]:
+        """读取港美基础快照副本; age_ms 仅按 Unix 行情时间计算, 缺戳为 None。
+
+        负 age_ms 表示源头时钟超前, 不伪装成已确认的新鲜度或市场交易状态。
+        """
+        wanted = set(symbols) if symbols is not None else None
+        with self._lock:
+            rows = [dict(row) for symbol, row in sorted(self._non_cn_quotes.items())
+                    if wanted is None or symbol in wanted]
+        now_ms = time.time() * 1000
+        for row in rows:
+            ts = row["timestamp"]
+            row["age_ms"] = round(now_ms - ts) if ts is not None else None
+        return rows
+
     def get_index_quotes(self, symbols: list[str] | None = None) -> pl.DataFrame:
         """返回实时指数行情缓存。不会触发 TickFlow 请求。"""
         with self._lock:
@@ -876,6 +894,51 @@ class QuoteService:
             logger.warning("实时行情市场守卫拒绝记录: %s", rejected)
         return groups
 
+    def _update_non_cn_quotes(self, markets: dict[str, list[dict]]) -> None:
+        """非 CN 缓存入口: 拒绝坏行, 部分/空批次不删除已有 symbol。
+
+        旧 Provider volume 契约是 100 股单位, 不能标成港股 lot 或美股 shares。
+        本阶段 volume 明确不支持, 其余数值不推导、不猜单位, change_pct 沿用小数制。
+        """
+        rejected = 0
+        for market in ("HK", "US"):
+            for record in markets[market]:
+                fields = ("last_price", "prev_close", "open", "high", "low",
+                          "amount", "change_pct", "timestamp")
+                values = {key: record.get(key) for key in fields}
+                try:
+                    valid = all(
+                        value is None or (
+                            isinstance(value, (int, float)) and not isinstance(value, bool)
+                            and math.isfinite(value)
+                        ) for value in values.values()
+                    )
+                except OverflowError:
+                    valid = False
+                if not valid or values["last_price"] is None or values["last_price"] <= 0:
+                    rejected += 1
+                    continue
+                if values["timestamp"] is not None and values["timestamp"] <= 0:
+                    rejected += 1
+                    continue
+                optional = {key: record.get(key) for key in ("name", "currency", "session", "trade_status")}
+                if any(value is not None and not isinstance(value, str) for value in optional.values()):
+                    rejected += 1
+                    continue
+                snapshot = {
+                    "symbol": record["symbol"], "market": market, **values, **optional,
+                    "volume": None, "volume_unit": "unsupported",
+                }
+                with self._lock:
+                    previous = self._non_cn_quotes.get(snapshot["symbol"])
+                    if (previous is not None and previous["timestamp"] is not None
+                            and snapshot["timestamp"] is not None
+                            and snapshot["timestamp"] < previous["timestamp"]):
+                        continue
+                    self._non_cn_quotes[snapshot["symbol"]] = snapshot
+        if rejected:
+            logger.warning("港美基础快照拒绝无效字段记录: %d", rejected)
+
     def _process_full_market_records(
         self,
         records: list[dict],
@@ -897,11 +960,10 @@ class QuoteService:
             return
 
         markets = self._partition_realtime_records(records)
+        self._update_non_cn_quotes(markets)
+        # 现有广播会使 CN overview 缓存失效; 港美基础更新暂不复用它。
         if markets["HK"] or markets["US"]:
-            logger.debug(
-                "HK/US 实时快照缓存尚未接入, 跳过 CN 链路: HK=%d, US=%d",
-                len(markets["HK"]), len(markets["US"]),
-            )
+            logger.debug("HK/US 基础快照更新结束, 不进入 CN 链路")
         records = markets["CN"]
         if not records:
             # 不能更新 CN fetch 状态、清空指数缓存或通知监控, 也不能沿用上轮定版确认。
