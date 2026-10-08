@@ -4,6 +4,7 @@ import { api, type HKRow, type HKSection, type HKSectionKey } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { MarketSwitcherBar, type Market } from '@/components/MarketSwitcher'
 import { cn } from '@/lib/cn'
+import { HK_MODE_LABELS, hkError, hkIndustry, hkReason, hkStockName } from './hkLabels'
 
 const sections: { key: HKSectionKey; title: string; span: string; hint?: string }[] = [
   { key: 'daily_stocks', title: '每日股票数据', span: 'xl:col-span-8', hint: '当前榜单 / 已获取标的 · 非全港股' },
@@ -29,7 +30,7 @@ function Card({ title, hint, section, loading, requestError, children, span }: {
     <div className="border-b border-border px-3 py-2">
       <div className="flex flex-wrap items-center justify-between gap-1">
         <h2 className={cn('text-xs font-semibold', unavailable ? 'text-secondary' : 'text-foreground')}>{title}</h2>
-        <span className={cn('rounded border border-border px-1.5 py-0.5 font-mono text-[9px]', unavailable ? 'text-muted' : 'text-accent')}>{section?.mode ?? 'UNAVAILABLE'}</span>
+        <span className={cn('rounded border border-border px-1.5 py-0.5 font-mono text-[9px]', unavailable ? 'text-muted' : 'text-accent')}>{HK_MODE_LABELS[section?.mode ?? 'UNAVAILABLE']}</span>
       </div>
       {hint && <p className="mt-1 text-[10px] leading-relaxed text-muted">{hint}</p>}
       {section && <p className="mt-1 break-words text-[9px] text-muted">{section.source} · 更新 {time(section.updated_at)}</p>}
@@ -38,7 +39,7 @@ function Card({ title, hint, section, loading, requestError, children, span }: {
       {loading ? <p className="py-5 text-center text-xs text-muted">加载中…</p>
         : requestError ? <p className="py-5 text-xs text-warning">请求失败，请稍后重试</p>
           : !section || unavailable ? <p className="py-5 text-xs leading-relaxed text-muted">暂无可靠数据源<br />{section?.error}</p>
-            : section.status === 'error' ? <p className="py-5 text-xs text-warning">暂时无法获取 · {section.error}</p>
+            : section.status === 'error' ? <p className="py-5 text-xs text-warning">暂时无法获取 · {hkError(section.error)}</p>
               : section.status === 'empty' ? <p className="py-5 text-xs text-muted">{section.error || '暂无数据'}</p>
                 : children}
     </div>
@@ -52,6 +53,8 @@ export function HongKongDashboard({ onMarketChange }: { onMarketChange: (market:
   const data = query.data
   const rows = (key: HKSectionKey): HKRow[] => Array.isArray(data?.[key].data) ? data[key].data as HKRow[] : []
   const effectiveFocus = focus || data?.focus_symbol
+  const stockMetadata = new Map(rows('daily_stocks').map(row => [row.symbol, row]))
+  const stockName = (row: HKRow) => hkStockName(row, stockMetadata.get(row.symbol))
   const content = (key: HKSectionKey) => {
     if (key === 'daily_stocks') {
       const sorted = [...rows(key)].sort((a, b) => (Number(b[sort] ?? -Infinity)) - (Number(a[sort] ?? -Infinity)))
@@ -61,7 +64,7 @@ export function HongKongDashboard({ onMarketChange }: { onMarketChange: (market:
           <table className="w-full whitespace-nowrap text-[10px] tabular-nums">
             <thead className="text-muted"><tr>{['股票 / 代码', '最新价', '涨跌幅', '今开', '最高', '最低', '成交额', '更新时间'].map(label => <th key={label} className="px-2 py-2 text-left font-normal">{label}</th>)}</tr></thead>
             <tbody>{sorted.map(row => <tr key={row.symbol} className={cn('border-t border-border', row.symbol === effectiveFocus && 'bg-accent/10')}>
-              <td className="px-2 py-2"><button type="button" onClick={() => setFocus(row.symbol)} aria-pressed={row.symbol === effectiveFocus} className="text-left text-accent hover:underline"><span className="block">{row.name || row.symbol}</span><span className="font-mono text-muted">{row.symbol}</span></button></td>
+              <td className="px-2 py-2"><button type="button" onClick={() => setFocus(row.symbol)} aria-pressed={row.symbol === effectiveFocus} className="text-left text-accent hover:underline"><span className="block">{stockName(row)}</span><span className="font-mono text-muted">{row.symbol}</span></button></td>
               {[row.last_price, row.change_pct, row.open, row.high, row.low, row.amount].map((value, index) => <td key={index} className="px-2 py-2">{fmt(value, index === 1)}</td>)}<td className="px-2 py-2 text-muted">{time(row.timestamp)}</td>
             </tr>)}</tbody>
           </table>
@@ -70,7 +73,7 @@ export function HongKongDashboard({ onMarketChange }: { onMarketChange: (market:
     }
     if (key === 'fundamentals') {
       const values = data?.fundamentals.data as HKRow | null
-      return <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] sm:grid-cols-3">{Object.entries(fields).map(([field, label]) => <div key={field} className="min-w-0"><dt className="text-[10px] text-muted">{label}</dt><dd className="break-words text-secondary">{fmt(values?.[field])}</dd></div>)}</dl>
+      return <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] sm:grid-cols-3">{Object.entries(fields).map(([field, label]) => <div key={field} className="min-w-0"><dt className="text-[10px] text-muted">{label}</dt><dd className="break-words text-secondary">{field === 'name' && values ? stockName(values) : fmt(values?.[field])}</dd></div>)}</dl>
     }
     if (key === 'capital_flow') {
       const lines = rows(key)
@@ -80,12 +83,12 @@ export function HongKongDashboard({ onMarketChange }: { onMarketChange: (market:
       return <div><p className="text-[11px] text-secondary">焦点 {effectiveFocus || '—'} · 分钟净流入序列（以源数据时间为准）</p><svg role="img" aria-label="官方资金流序列" viewBox="0 0 500 130" className="mt-3 h-32 w-full"><line x1="0" y1="65" x2="500" y2="65" className="stroke-border" /><polyline points={points} fill="none" className="stroke-accent" strokeWidth="2" /></svg><p className="text-[10px] text-muted">序列 {time(lines[0]?.timestamp)} — {time(lines.at(-1)?.timestamp)} · 流入/流出拆分未由本接口提供</p></div>
     }
     return <div className="max-h-64 space-y-2 overflow-auto text-[11px]">{rows(key).map((row, index) => <div key={`${row.symbol}-${index}`} className="border-b border-border pb-2 last:border-0">
-      <div className="flex flex-wrap justify-between gap-1"><span className="font-mono text-accent">{row.name || row.symbol}</span><span>{row.net_inflow !== undefined ? fmt(row.net_inflow) : fmt(row.change_pct, true)}</span></div>
+      <div className="flex flex-wrap justify-between gap-1"><span className="font-mono text-accent">{stockName(row)}</span><span>{row.net_inflow !== undefined ? fmt(row.net_inflow) : fmt(row.change_pct, true)}</span></div>
       {key === 'movers' && <p className="mt-1 text-[10px] text-muted">{row.symbol} · 最新价 {fmt(row.last_price)} · 类型 {fmt(row.alert_type)}</p>}
       {row.description && <p className="mt-1 break-words text-secondary">{row.description}</p>}
-      {row.reason && <p className="mt-1 break-words text-secondary">{row.reason}</p>}
+      {row.reason && <p className="mt-1 break-words text-secondary">{hkReason(row.reason)}</p>}
       {row.ex_date && <p className="mt-1 text-[10px] text-muted">除净 {row.ex_date} · 派息 {row.payment_date || '—'} · 登记 {row.record_date || '—'}</p>}
-      {row.timestamp && <p className="mt-1 text-[10px] text-muted">{time(row.timestamp)} · {row.labels?.join(' / ')}</p>}
+      {row.timestamp && <p className="mt-1 text-[10px] text-muted">{time(row.timestamp)} · {row.labels?.map(label => hkIndustry(label)).join(' / ')}</p>}
     </div>)}</div>
   }
   const state = data?.market.session_state

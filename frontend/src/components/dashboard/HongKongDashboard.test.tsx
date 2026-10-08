@@ -37,10 +37,25 @@ async function render() {
 it('shows all 12 sections, honest unavailable states, and isolates a section error', async () => {
   await render()
   expect(Array.from(host.querySelectorAll('h2')).map(node => node.textContent)).toEqual(titles)
-  expect(host.textContent).toContain('UNAVAILABLE')
-  expect(host.textContent).toContain('quote_permission')
+  expect(host.textContent).toContain('暂不可用')
+  expect(host.textContent).toContain('行情权限不足')
   expect(host.textContent).toContain('500')
   expect(host.textContent).toContain('非全港股')
+})
+it('renders all Chinese modes and localizes reasons/industry using official stock-table names', async () => {
+  const data = response()
+  data.daily_stocks.data = [{ symbol: '1200.HK', name: '美联集团', last_price: 2 }]
+  data.fundamentals = { status: 'ok', mode: 'DAILY', source: 'Longbridge static_info', data: { symbol: '1200.HK', name_en: 'Midland Holdings' }, error: null, updated_at: null }
+  data.morning_accumulation = { status: 'empty', mode: 'DERIVED', source: 'Longbridge capital_flow', data: [], error: null, updated_at: null }
+  data.movers = { status: 'ok', mode: 'LIVE', source: 'Longbridge top_movers', data: [
+    { symbol: '1200.HK', name: 'Midland Holdings', reason: 'Volatility exceeds 20-day avg', labels: ['Real Estate Services', 'Media'], timestamp: 1791426600000 },
+    { symbol: '8627.HK', name_en: 'Official English Company', reason: 'Unmapped official reason', labels: ['Unmapped Industry'], timestamp: 1791426600000 },
+  ], error: null, updated_at: null }
+  mock.get.mockResolvedValue(data)
+  await render()
+  for (const label of ['实时', '日频', '派生', '暂不可用', '波动率超过20日均值', '房地产服务 / 媒体', '美联集团', 'Official English Company', 'Unmapped official reason', 'Unmapped Industry']) expect(host.textContent).toContain(label)
+  expect(host.textContent).not.toContain('Midland Holdings')
+  expect(host.textContent).not.toContain('Volatility exceeds 20-day avg')
 })
 it('clicking a real table row updates the focus query without sharing CN cache keys', async () => {
   await render()
