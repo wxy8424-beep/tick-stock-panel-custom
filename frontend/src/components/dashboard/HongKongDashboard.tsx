@@ -98,7 +98,7 @@ export function HongKongDashboard({ onMarketChange }: { onMarketChange: (market:
       <h1 className="text-lg font-semibold text-foreground">港股市场</h1>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-secondary"><span className="text-accent">{label}</span><span>香港本地时间 {time(data?.market.local_time)}</span><span>Longbridge</span><span>最后更新 {time(data?.updated_at)}</span><span>焦点股票 {effectiveFocus || '—'}</span><button type="button" onClick={() => query.refetch()} disabled={query.isFetching} className="rounded-btn border border-border px-2 py-1 disabled:opacity-50">刷新</button></div>
     </header>
-    <MarketSwitcherBar value="HK" enabledMarkets={['CN', 'HK']} onChange={onMarketChange} className="mb-3 rounded-card border px-3" />
+    <MarketSwitcherBar value="HK" enabledMarkets={['CN', 'HK', 'US']} onChange={onMarketChange} className="mb-3 rounded-card border px-3" />
     <p className="mb-3 text-[10px] text-muted">市场状态由后端香港时钟提供；假日日历未确认。行情可能为最近交易日快照，请查看数据时间。</p>
     <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-12">{sections.map(({ key, ...item }) => <Card key={key} {...item} section={data?.[key]} loading={query.isLoading} requestError={query.isError}>{content(key)}</Card>)}</div>
   </div>

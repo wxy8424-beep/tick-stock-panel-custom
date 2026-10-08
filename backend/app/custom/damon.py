@@ -7,5 +7,7 @@ EXTENSION_API_VERSION = BACKEND_EXTENSION_API_VERSION
 
 def setup(registrar: BackendExtensionRegistrar) -> None:
     from app.api.hk_dashboard import router
+    from app.api.us_dashboard import router as us_router
 
     registrar.include_router(router)
+    registrar.include_router(us_router)

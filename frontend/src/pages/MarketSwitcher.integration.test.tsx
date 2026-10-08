@@ -33,7 +33,7 @@ vi.mock('@/lib/useSharedQueries', () => ({
   usePreferences: () => ({ data: {} }), useQuoteStatus: () => ({ data: {} }),
 }))
 vi.mock('@/components/dashboard/useDashboardLayout', () => ({ useDashboardLayout: () => ({ items: [], setItems: vi.fn() }) }))
-vi.mock('@/components/dashboard/DashboardGrid', () => ({ DashboardGrid: () => <div>原 A 股看板网格</div> }))
+vi.mock('@/components/dashboard/DashboardGrid', async importOriginal => ({ ...await importOriginal<typeof import('@/components/dashboard/DashboardGrid')>(), DashboardGrid: ({ renderItem }: { renderItem?: unknown }) => <div>{renderItem ? '美股独立看板网格' : '原 A 股看板网格'}</div> }))
 vi.mock('@/components/AdjFactorSyncGate', () => ({ useAdjFactorSyncGate: () => ({ guard: vi.fn(), dialog: null }) }))
 vi.mock('@/components/StockPreviewDialog', () => ({ StockPreviewDialog: () => null }))
 vi.mock('@/components/DimensionMembersDialog', () => ({ DimensionMembersDialog: () => null, dimensionKindForSourceField: () => null }))
@@ -57,33 +57,32 @@ async function render(page: React.ReactNode, path: string) {
   }
   await act(async () => { root.render(<MemoryRouter initialEntries={[path]}>{page}<Location /></MemoryRouter>) })
 }
-function assertControls(hkEnabled = false) {
+function assertControls(hkEnabled = false, usEnabled = false) {
   const group = host.querySelector('[aria-label="市场选择"]')!
   expect(group).not.toBeNull()
   const buttons = group.querySelectorAll('button')
   expect(buttons[0].getAttribute('aria-pressed')).toBe('true')
   expect(buttons[1].disabled).toBe(!hkEnabled)
-  expect(buttons[2].disabled).toBe(true)
+  expect(buttons[2].disabled).toBe(!usEnabled)
   return buttons
 }
 
-it('Dashboard preserves CN queries/grid and other URL parameters through CN -> HK -> CN', async () => {
+it('Dashboard preserves CN queries/grid and URL parameters through CN -> US -> HK -> CN', async () => {
   await render(<Dashboard />, '/?keep=original')
   expect(host.textContent).toContain('市场看板')
   expect(host.textContent).toContain('原 A 股看板网格')
   expect(fixtures.queryKeys).toContainEqual(['overview-market', 'latest'])
-  const count = fixtures.queryKeys.length
-  const buttons = assertControls(true)
+  const buttons = assertControls(true, true)
   await act(async () => buttons[2].click())
-  expect(fixtures.queryKeys).toHaveLength(count)
-  expect(host.textContent).toContain('原 A 股看板网格')
-  await act(async () => buttons[1].click())
+  expect(host.querySelector('h1')?.textContent).toBe('美股市场看板')
+  expect(host.querySelector('[data-location]')?.textContent).toBe('/?keep=original&market=US')
+  await act(async () => host.querySelectorAll<HTMLButtonElement>('[aria-label="市场选择"] button')[1].click())
   expect(host.querySelector('h1')?.textContent).toBe('港股市场')
   expect(host.querySelector('[data-location]')?.textContent).toBe('/?keep=original&market=HK')
   await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="市场选择"] button')!.click())
   expect(host.querySelector('h1')?.textContent).toBe('市场看板')
   expect(host.textContent).toContain('原 A 股看板网格')
-  expect(host.querySelector('[data-location]')?.textContent).toBe('/?keep=original')
+  expect(host.querySelector('[data-location]')?.textContent).toBe('/?keep=original&market=CN')
 })
 
 it('direct URL and refresh initial state render HK without mounting CN queries', async () => {
@@ -92,7 +91,15 @@ it('direct URL and refresh initial state render HK without mounting CN queries',
   expect(fixtures.queryKeys.some(key => key[0] === 'overview-market')).toBe(false)
   const buttons = host.querySelectorAll<HTMLButtonElement>('[aria-label="市场选择"] button')
   expect(buttons[1].getAttribute('aria-pressed')).toBe('true')
-  expect(buttons[2].disabled).toBe(true)
+  expect(buttons[2].disabled).toBe(false)
+})
+
+it('direct US URL preserves US on refresh and never mounts CN query keys', async () => {
+  await render(<Dashboard />, '/?market=US')
+  expect(host.querySelector('h1')?.textContent).toBe('美股市场看板')
+  expect(fixtures.queryKeys.some(key => key[0] === 'overview-market' || key[0] === 'hk-dashboard')).toBe(false)
+  expect(fixtures.queryKeys).toContainEqual(['us-dashboard', 'default'])
+  expect(host.querySelectorAll('[aria-label="市场选择"] button')[2].getAttribute('aria-pressed')).toBe('true')
 })
 
 it('Watchlist retains CN filters and the original query without changing on disabled clicks', async () => {

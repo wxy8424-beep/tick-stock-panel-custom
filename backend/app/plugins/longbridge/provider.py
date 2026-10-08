@@ -169,7 +169,7 @@ class LongbridgeProvider:
         The existing lock serializes SDK calls with realtime polling.
         """
         allowed = {
-            "quote": {"quote", "static_info", "capital_flow"},
+            "quote": {"quote", "static_info", "capital_flow", "option_volume"},
             "market": {"top_movers"},
             "fundamental": {"dividend_detail"},
         }

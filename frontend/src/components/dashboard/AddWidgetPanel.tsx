@@ -18,9 +18,11 @@ const PANEL_W = 288 // w-72
 export function AddWidgetPanel({
   placedTypes,
   onAdd,
+  widgetLabels,
 }: {
   placedTypes: Set<WidgetType>
   onAdd: (t: WidgetType, props?: Record<string, string>) => void
+  widgetLabels?: Partial<Record<WidgetType, string>>
 }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -123,7 +125,7 @@ export function AddWidgetPanel({
                   title={placed ? '已在布局中' : undefined}
                 >
                   <d.icon className="h-3.5 w-3.5 shrink-0 text-accent" />
-                  <span className="flex-1 truncate">{d.label}</span>
+                  <span className="flex-1 truncate">{widgetLabels?.[d.id] ?? d.label}</span>
                   {placed && <span className="text-[9px]">已添加</span>}
                 </button>
               )

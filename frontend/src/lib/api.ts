@@ -45,6 +45,20 @@ export type HKDashboardResponse = Record<HKSectionKey, HKSection> & {
   focus_symbol: string | null
 }
 
+export const US_SECTION_KEYS = ['indices', 'kpi', 'distribution', 'radar', 'trend', 'ladder', 'concept-rank', 'industry-rank', 'monitor', 'gainers', 'losers', 'turnover', 'activity'] as const
+export type USSectionKey = typeof US_SECTION_KEYS[number]
+export interface USSection extends Omit<HKSection, 'data'> { data: unknown }
+export interface USStats {
+  total: number; up: number; flat: number; down: number; up_pct: number | null
+  strong_up: number; strong_down: number; avg_pct: number | null; median_pct: number | null
+  amount_total: number | null; amount_count: number
+}
+export type USDashboardResponse = Record<USSectionKey, USSection> & {
+  market: { code: 'US'; timezone: string; local_time: string; session_state: string; calendar_status: string }
+  updated_at: string; focus_symbol: string | null; focus_quote: MarketSnapshotRow | null
+  sample: { coverage: string; requested: number; received: number }
+}
+
 type RequestOptions = RequestInit & {
   /** 为 true 时不弹错误 toast（由调用方自行汇总提示，如多图串行队列） */
   quiet?: boolean
@@ -2226,6 +2240,7 @@ export interface SectorRotationUniverseItem {
 
 // ===== API surface =====
 export const api = {
+  usDashboard: (symbol?: string) => request<USDashboardResponse>(`/api/dashboard/us${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   hkDashboard: (symbol?: string) => request<HKDashboardResponse>(`/api/dashboard/hk${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   health: () => request<{ status: string; version: string; mode: string }>('/health'),
 

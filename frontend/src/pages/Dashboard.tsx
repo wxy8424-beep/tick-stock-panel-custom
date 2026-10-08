@@ -1,5 +1,6 @@
 import { MarketSwitcherBar, type Market } from '@/components/MarketSwitcher'
 import { HongKongDashboard } from '@/components/dashboard/HongKongDashboard'
+import { UnitedStatesDashboard } from '@/components/dashboard/UnitedStatesDashboard'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -27,17 +28,16 @@ type PreviewSource = 'gain' | 'loss' | 'amount' | 'active' | 'concept' | 'indust
 
 export function Dashboard() {
   const [params, setParams] = useSearchParams()
-  const market: Market = params.get('market') === 'HK' ? 'HK' : 'CN'
+  const requested = params.get('market')
+  const market: Market = requested === 'HK' || requested === 'US' ? requested : 'CN'
   const changeMarket = (next: Market) => {
-    if (next === 'US') return
     setParams(previous => {
       const updated = new URLSearchParams(previous)
-      if (next === 'HK') updated.set('market', 'HK')
-      else updated.delete('market')
+      updated.set('market', next)
       return updated
     })
   }
-  return market === 'HK' ? <HongKongDashboard onMarketChange={changeMarket} /> : <ChinaDashboard onMarketChange={changeMarket} />
+  return market === 'US' ? <UnitedStatesDashboard onMarketChange={changeMarket} /> : market === 'HK' ? <HongKongDashboard onMarketChange={changeMarket} /> : <ChinaDashboard onMarketChange={changeMarket} />
 }
 
 function ChinaDashboard({ onMarketChange }: { onMarketChange: (market: Market) => void }) {
@@ -319,7 +319,7 @@ function ChinaDashboard({ onMarketChange }: { onMarketChange: (market: Market) =
         </div>
       </div>
 
-      <MarketSwitcherBar value="CN" enabledMarkets={['CN', 'HK']} onChange={onMarketChange} className="mb-1.5 rounded-card border px-3" />
+      <MarketSwitcherBar value="CN" enabledMarkets={['CN', 'HK', 'US']} onChange={onMarketChange} className="mb-1.5 rounded-card border px-3" />
 
       {/* 自选实时模式提示: 大盘看板为盘后数据, 仅自选股实时。避免用户误读为全市场实时。 */}
       {quoteMode === 'watchlist' && (

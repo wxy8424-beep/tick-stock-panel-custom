@@ -30,14 +30,16 @@ export function normalizeDashboardLayout(blob: unknown): DashboardItem[] {
 }
 
 export interface DashboardGridProps {
-  ctx: WidgetCtx
+  ctx?: WidgetCtx
+  renderItem?: (item: DashboardItem) => ReactNode
+  widgetLabels?: Partial<Record<DashboardItem['t'], string>>
   items: DashboardItem[]
   onItemsChange: (items: DashboardItem[]) => void
   /** 编辑态由 Dashboard 页头部控制组持有, 受控传入 */
   editing: boolean
 }
 
-export function DashboardGrid({ ctx, items, onItemsChange, editing }: DashboardGridProps) {
+export function DashboardGrid({ ctx, items, onItemsChange, editing, renderItem, widgetLabels }: DashboardGridProps) {
   const { width, containerRef, mounted } = useContainerWidth({ measureBeforeMount: true })
 
   const rglLayout = useMemo(
@@ -65,8 +67,9 @@ export function DashboardGrid({ ctx, items, onItemsChange, editing }: DashboardG
   }, [items, onItemsChange])
 
   const renderWidget = (it: DashboardItem): ReactNode => {
+    if (renderItem) return renderItem(it)
     const def = widgetDef(it.t)
-    return def ? def.render(ctx, it) : null
+    return def && ctx ? def.render(ctx, it) : null
   }
 
   const isMobile = mounted && width < 768
@@ -119,7 +122,7 @@ export function DashboardGrid({ ctx, items, onItemsChange, editing }: DashboardG
                   <div className="absolute inset-x-0 top-0 z-10 flex h-6 items-center justify-between rounded-t-card bg-surface/95 pl-2 pr-5 text-[10px] text-secondary shadow-sm">
                     <span className="flex min-w-0 items-center gap-1">
                       {Icon && <Icon className="h-3 w-3 shrink-0 text-accent" />}
-                      <span className="truncate">{def?.label ?? it.t}{it.t === 'ext-link' && it.p?.title ? ` · ${it.p.title}` : ''}</span>
+                      <span className="truncate">{widgetLabels?.[it.t] ?? def?.label ?? it.t}{it.t === 'ext-link' && it.p?.title ? ` · ${it.p.title}` : ''}</span>
                     </span>
                     <button
                       type="button"
