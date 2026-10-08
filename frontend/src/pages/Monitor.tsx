@@ -199,7 +199,7 @@ export function Monitor() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader title="监控中心" subtitle="实时信号与规则管理" />
+      <PageHeader showMarketSwitcher title="监控中心" subtitle="实时信号与规则管理" />
       {realtimeUnavailable && (
         <div className="px-5 pb-1">
           <div className="mx-auto flex max-w-7xl items-center gap-2.5 rounded-xl border border-warning/30 bg-warning/[0.06] px-4 py-2.5">

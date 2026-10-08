@@ -1101,7 +1101,7 @@ function CompareView({ onCreateSingle }: { onCreateSingle: () => void }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader
+      <PageHeader showMarketSwitcher
         title="模拟盘"
         subtitle="多账户并行对比 — 同本金 · 同费率 · 点表头排序, 点行展开完整账户操作"
         right={
@@ -1575,7 +1575,7 @@ function SetupView({ draftId, setDraftId, onBack }: {
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader
+      <PageHeader showMarketSwitcher
         title="新建虚拟账户"
         subtitle="单账户创建 · 批量对比请用对比页的「批量创建账户」"
         right={

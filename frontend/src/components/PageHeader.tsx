@@ -1,4 +1,5 @@
 import { cn } from '@/lib/cn'
+import { MarketSwitcherBar } from './MarketSwitcher'
 
 interface Props {
   title: string
@@ -7,10 +8,12 @@ interface Props {
   titleExtra?: React.ReactNode
   right?: React.ReactNode
   className?: string
+  showMarketSwitcher?: boolean
 }
 
-export function PageHeader({ title, subtitle, titleExtra, right, className }: Props) {
+export function PageHeader({ title, subtitle, titleExtra, right, className, showMarketSwitcher = false }: Props) {
   return (
+    <>
     <header
       className={cn(
         'px-5 pt-3 pb-2 border-b border-border flex items-center justify-between gap-4',
@@ -30,5 +33,7 @@ export function PageHeader({ title, subtitle, titleExtra, right, className }: Pr
       </div>
       {right}
     </header>
+    {showMarketSwitcher && <MarketSwitcherBar />}
+    </>
   )
 }

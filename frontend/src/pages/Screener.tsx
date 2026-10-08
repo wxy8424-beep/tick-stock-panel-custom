@@ -745,7 +745,7 @@ export function Screener() {
 
   return (
     <>
-      <PageHeader
+      <PageHeader showMarketSwitcher
         title="策略"
         subtitle="基于本地 enriched 表 · 毫秒级 SQL"
         right={

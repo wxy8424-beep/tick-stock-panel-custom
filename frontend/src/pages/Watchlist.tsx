@@ -1360,7 +1360,7 @@ export function Watchlist() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader
+      <PageHeader showMarketSwitcher
         title="自选股"
         titleExtra={
           <span className="inline-flex items-center gap-1.5">

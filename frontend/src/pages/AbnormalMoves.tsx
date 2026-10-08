@@ -91,7 +91,7 @@ export function AbnormalMoves() {
     // 整页占满视口: 头部/tab固定, 只有各 tab 内容区滚动
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0">
-        <PageHeader
+        <PageHeader showMarketSwitcher
           title="异动监控"
           subtitle="竞价 · 盘中 · 偏移 · 全时段异动中心"
           right={

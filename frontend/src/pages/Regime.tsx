@@ -1,3 +1,4 @@
+import { MarketSwitcherBar } from '@/components/MarketSwitcher'
 /**
  * 市场环境(Regime)页 — 每日环境状态时序趋势 + 状态分布。
  *
@@ -704,6 +705,8 @@ export function Regime() {
           </div>
         </div>
       </div>
+
+      <MarketSwitcherBar className="rounded-card border px-4" />
 
       {/* ── 视图切换: 市场环境 / 情绪周期 (两组内容 tab 隔离, 减少单页高度) ── */}
       <div className="flex items-center gap-2">

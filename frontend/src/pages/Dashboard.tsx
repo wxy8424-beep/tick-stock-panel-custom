@@ -1,3 +1,4 @@
+import { MarketSwitcherBar } from '@/components/MarketSwitcher'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -301,6 +302,8 @@ export function Dashboard() {
           )}
         </div>
       </div>
+
+      <MarketSwitcherBar className="mb-1.5 rounded-card border px-3" />
 
       {/* 自选实时模式提示: 大盘看板为盘后数据, 仅自选股实时。避免用户误读为全市场实时。 */}
       {quoteMode === 'watchlist' && (

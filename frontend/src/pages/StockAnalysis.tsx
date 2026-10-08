@@ -79,7 +79,7 @@ export function StockAnalysis() {
 
   return (
     <>
-      <PageHeader
+      <PageHeader showMarketSwitcher
         title="个股分析"
         subtitle="日 K · 关键价位 · AI 四维分析(技术 / 基本面 / 财务 / 消息面)"
         right={

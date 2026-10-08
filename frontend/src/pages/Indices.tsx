@@ -1,3 +1,4 @@
+import { MarketSwitcherBar } from '@/components/MarketSwitcher'
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -191,6 +192,8 @@ export function Indices() {
           </button>
         </div>
       </div>
+
+      <MarketSwitcherBar className="mb-4 rounded-card border px-3" />
 
       <div className="grid grid-cols-[15rem_1fr] gap-4">
         <aside className="rounded-card border border-border bg-surface p-3">
