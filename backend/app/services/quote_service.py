@@ -825,11 +825,56 @@ class QuoteService:
                 "turnover_rate": ext.get("turnover_rate"),
                 "timestamp": q.get("timestamp"),
                 "session": q.get("session"),
+                # 保留源头的可选市场声明, 避免解析时抹掉与 symbol 冲突的元数据。
+                **{key: q[key] for key in ("market", "region", "exchange") if key in q},
             })
 
         return self._process_full_market_records(
             records, t0=t0, now_ts=now_ts, final_boundary_ms=final_boundary_ms
         )
+
+    @staticmethod
+    def _partition_realtime_records(records: list[dict]) -> dict[str, list[dict]]:
+        """只识别市场边界, 不改变记录; HK/US 分组留给后续基础快照接线。
+
+        CN 使用当前六位数字 + SH/SZ/BJ 的证券格式, 资产分类仍由原有维表负责。
+        可选 market/region 声明必须与后缀一致, CN exchange 必须与后缀一致。
+        未知或冲突记录不进入任何分组; 日志不输出原始行情或元数据。
+        """
+        groups: dict[str, list[dict]] = {"CN": [], "HK": [], "US": []}
+        rejected: dict[str, int] = {}
+        for record in records:
+            reason = None
+            symbol = record.get("symbol") if isinstance(record, dict) else None
+            if not isinstance(symbol, str) or "." not in symbol:
+                reason = "缺少有效 symbol"
+            else:
+                code, _, suffix = symbol.rpartition(".")
+                market = {"SH": "CN", "SZ": "CN", "BJ": "CN", "HK": "HK", "US": "US"}.get(suffix)
+                if not code or market is None:
+                    reason = "未知市场后缀"
+                elif market == "CN" and not (len(code) == 6 and code.isascii() and code.isdigit()):
+                    reason = "不符合 CN 证券代码格式"
+                else:
+                    for key in ("market", "region"):
+                        value = record.get(key)
+                        if value is not None and (
+                            not isinstance(value, str) or value.strip().upper() != market
+                        ):
+                            reason = f"{key} 与 symbol 市场冲突或声明未知"
+                            break
+                    exchange = record.get("exchange")
+                    if reason is None and market == "CN" and exchange is not None and (
+                        not isinstance(exchange, str) or exchange.strip().upper() != suffix
+                    ):
+                        reason = "exchange 与 CN symbol 后缀冲突"
+                    if reason is None:
+                        groups[market].append(record)
+                        continue
+            rejected[reason] = rejected.get(reason, 0) + 1
+        if rejected:
+            logger.warning("实时行情市场守卫拒绝记录: %s", rejected)
+        return groups
 
     def _process_full_market_records(
         self,
@@ -847,6 +892,23 @@ class QuoteService:
         返回竞价前旧价时把陈旧收盘价固化到当日分区。
         """
         from app.services import preferences
+        if not records:
+            logger.warning("行情数据为空")
+            return
+
+        markets = self._partition_realtime_records(records)
+        if markets["HK"] or markets["US"]:
+            logger.debug(
+                "HK/US 实时快照缓存尚未接入, 跳过 CN 链路: HK=%d, US=%d",
+                len(markets["HK"]), len(markets["US"]),
+            )
+        records = markets["CN"]
+        if not records:
+            # 不能更新 CN fetch 状态、清空指数缓存或通知监控, 也不能沿用上轮定版确认。
+            if final_boundary_ms is not None:
+                self._last_final_confirmed = False
+            return
+
         all_index_symbols = set(self._repo.get_index_symbol_set()) if self._repo else set()
         core_index_symbols = set(CORE_INDEX_SYMBOLS)
         all_index_symbols.update(core_index_symbols)
@@ -856,11 +918,7 @@ class QuoteService:
             if not etf_inst.is_empty() and "symbol" in etf_inst.columns:
                 all_etf_symbols = set(etf_inst["symbol"].cast(pl.Utf8).to_list())
 
-        if not records:
-            logger.warning("行情数据为空")
-            return
-
-        # ---- final 定版确认: 快照最大时间戳达到边界 (含容差) 才允许落盘 ----
+        # ---- final 定版确认: 仅 CN 快照最大时间戳达到边界 (含容差) 才允许落盘 ----
         confirmed_final: bool | None = None
         if final_boundary_ms is not None:
             ts_vals = [t for t in (r.get("timestamp") for r in records) if t]
