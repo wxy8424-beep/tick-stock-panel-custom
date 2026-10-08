@@ -631,7 +631,7 @@ class QuoteService:
             try:
                 # 管道/数据修正运行期间临时暂停取数, 防止与管道写同一批 parquet 竞态。
                 # 线程继续存活 + 分片 sleep, resume() 后即时恢复, 无需重启线程。
-                if not self._paused:
+                if not self._paused and not self._poll_non_cn_quotes():
                     phase = self._market_phase()
                     if self._should_poll_for_market("CN", cn_phase=phase):
                         is_final = phase in {"morning_final", "close_final"}
@@ -674,6 +674,30 @@ class QuoteService:
             while self._running and self._enabled and waited < self._interval:
                 time.sleep(0.5)
                 waited += 0.5
+
+    def _poll_non_cn_quotes(self) -> bool:
+        """按码源独立轮询港美; True 表示本轮不走 CN 全市场链路。"""
+        from app.data_providers import custom as custom_sources
+        from app.services import preferences
+
+        name = preferences.get_realtime_data_provider()
+        if not custom_sources.provider_has_dataset(name, "realtime"):
+            return False
+        provider = custom_sources.get_provider(name)
+        if getattr(provider, "realtime_snapshot_scope", None) != "symbols":
+            return False
+        fetch = getattr(provider, "get_realtime_for_markets", None)
+        markets = [market for market in ("HK", "US") if self._should_poll_for_market(market)]
+        if not markets or not callable(fetch):
+            return True
+        try:
+            with self._fetch_lock:
+                records = fetch(markets)
+                self._update_non_cn_quotes(self._partition_realtime_records(records))
+        except Exception:
+            # SDK 异常可能携带认证请求内容, 不输出原文。
+            logger.warning("港美按码实时快照更新失败")
+        return True
 
     def _cleanup_day_scoped_state(self) -> None:
         """按日清理 final 同步状态 (键为 (date, phase), 严格无界累积)。
@@ -721,16 +745,25 @@ class QuoteService:
         if provider_name != "tickflow":
             from app.data_providers import custom as custom_sources
             if custom_sources.provider_has_dataset(provider_name, "realtime"):
+                provider = None
                 try:
                     t0 = time.perf_counter()
                     now_ts = time.perf_counter()
                     provider = custom_sources.get_provider(provider_name)
                     records = provider.get_realtime()
+                    scoped = getattr(provider, "realtime_snapshot_scope", None) == "symbols"
+                    if scoped:
+                        # 按码批次不能覆盖 CN 全市场分区或确认全市场 final。
+                        # 当前 Longbridge 成交量单位尚未确认, CN 一律 fail closed。
+                        markets = self._partition_realtime_records(records)
+                        if markets["CN"]:
+                            logger.info("按码行情源 CN 快照未满足全市场/成交量契约, 跳过 CN 链路")
+                        records = markets["HK"] + markets["US"]
                     # 指数补充: A 股快照通常不含指数。插件可选实现
                     # get_realtime_indices(symbols) 用独立端点补拉 (如 fuyao 指数快照);
                     # 未实现的源指数缓存为空, 由日K兜底接管。
-                    replace_index_cache = True
-                    fetch_indices = getattr(provider, "get_realtime_indices", None)
+                    replace_index_cache = not scoped
+                    fetch_indices = None if scoped else getattr(provider, "get_realtime_indices", None)
                     if callable(fetch_indices):
                         # 偏离值基准指数 (科创50/创业板综指等) 一并拉取, 供盘中
                         # attach_deviation_columns_today 实时外推; 展示层仍按核心
@@ -751,7 +784,10 @@ class QuoteService:
                             logger.warning("自定义源指数行情拉取失败: %s", e)
                             replace_index_cache = False
                 except Exception as e:  # noqa: BLE001
-                    logger.warning("自定义实时行情拉取失败: %s", e)
+                    if getattr(provider, "realtime_snapshot_scope", None) == "symbols":
+                        logger.warning("按码实时行情拉取失败")
+                    else:
+                        logger.warning("自定义实时行情拉取失败: %s", e)
                     return
                 return self._process_full_market_records(
                     records,

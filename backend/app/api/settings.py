@@ -9,7 +9,7 @@ import time
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from app import secrets_store
 from app.data_providers.custom.config import MAX_TIMEOUT
@@ -634,6 +634,62 @@ def get_capability_matrix() -> dict:
         },
         tickflow_tier=policy.base_tier_name(),
     )
+
+
+class LongbridgeCredentialsIn(BaseModel):
+    app_key: SecretStr = SecretStr("")
+    app_secret: SecretStr = SecretStr("")
+    access_token: SecretStr = SecretStr("")
+
+
+@router.get("/longbridge-credentials")
+def longbridge_credentials_status() -> dict:
+    from app.plugins.longbridge.provider import credential_status
+
+    return credential_status()
+
+
+def _save_longbridge_credentials(req: LongbridgeCredentialsIn) -> dict:
+    from app.data_providers import custom as custom_sources
+    from app.plugins.longbridge.provider import credential_status, probe_credentials
+
+    bundle = tuple(value.get_secret_value().strip() for value in (req.app_key, req.app_secret, req.access_token))
+    ok, reason = probe_credentials(bundle)
+    if not ok:
+        return {"ok": False, "reason": reason}
+    try:
+        secrets_store.save(dict(zip(
+            ("longbridge_app_key", "longbridge_app_secret", "longbridge_access_token"), bundle, strict=True,
+        )))
+    except Exception:
+        return {"ok": False, "reason": "storage_error"}
+    try:
+        custom_sources.load_all()
+    except Exception:
+        return {"ok": True, "reason": "reload_failed", **credential_status()}
+    return {"ok": True, **credential_status()}
+
+
+@router.post("/longbridge-credentials")
+async def save_longbridge_credentials(request: Request) -> dict:
+    # 手动校验, 避免 FastAPI 422 的 input 字段把候选 secret 原文返回浏览器。
+    from starlette.concurrency import run_in_threadpool
+
+    try:
+        req = LongbridgeCredentialsIn.model_validate(await request.json())
+    except Exception:
+        return {"ok": False, "reason": "invalid_request"}
+    return await run_in_threadpool(_save_longbridge_credentials, req)
+
+
+@router.delete("/longbridge-credentials")
+def clear_longbridge_credentials() -> dict:
+    from app.data_providers import custom as custom_sources
+    from app.plugins.longbridge.provider import credential_status
+
+    secrets_store.clear("longbridge_app_key", "longbridge_app_secret", "longbridge_access_token")
+    custom_sources.load_all()
+    return {"ok": True, **credential_status()}
 
 
 @router.post("/plugin-key")

@@ -11,6 +11,7 @@ import copy
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 
 from app.services.fs_utils import atomic_write_text
@@ -21,6 +22,7 @@ logger = logging.getLogger(__name__)
 # 实时行情每轮的 webhook/邮件判定会多次读 secrets, 避免每次全文件读+JSON 解析。
 _cache: dict | None = None
 _cache_sig: tuple[int, int] | None = None
+_WRITE_LOCK = threading.RLock()
 
 
 def _path() -> Path:
@@ -54,30 +56,32 @@ def load() -> dict:
 
 def save(updates: dict) -> dict:
     """合并写入(不会清掉未提及的字段)。返回新内容。"""
-    current = load()
-    current.update({k: v for k, v in updates.items() if v is not None})
-    p = _path()
-    atomic_write_text(
-        p, json.dumps(current, indent=2, ensure_ascii=False), mode=0o600,
-    )
-    return current
+    with _WRITE_LOCK:
+        current = load()
+        current.update({k: v for k, v in updates.items() if v is not None})
+        p = _path()
+        atomic_write_text(
+            p, json.dumps(current, indent=2, ensure_ascii=False), mode=0o600,
+        )
+        return current
 
 
 def clear(*keys: str) -> dict:
     """清掉指定字段(留空清全部)。"""
-    p = _path()
-    if not p.exists():
-        return {}
-    if not keys:
-        p.unlink()
-        return {}
-    current = load()
-    for k in keys:
-        current.pop(k, None)
-    atomic_write_text(
-        p, json.dumps(current, indent=2, ensure_ascii=False), mode=0o600,
-    )
-    return current
+    with _WRITE_LOCK:
+        p = _path()
+        if not p.exists():
+            return {}
+        if not keys:
+            p.unlink()
+            return {}
+        current = load()
+        for k in keys:
+            current.pop(k, None)
+        atomic_write_text(
+            p, json.dumps(current, indent=2, ensure_ascii=False), mode=0o600,
+        )
+        return current
 
 
 def get_tickflow_key() -> str:

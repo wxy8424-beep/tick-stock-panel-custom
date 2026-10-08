@@ -15,6 +15,7 @@ export const QK = {
   version:        ['version'] as const,
   preferences:    ['preferences'] as const,
   dataSources:    ['data-sources'] as const,
+  longbridgeCredentials: ['longbridge-credentials'] as const,
   capabilityMatrix: ['capability-matrix'] as const,
   quoteStatus:    ['quote-status'] as const,
   quoteInterval:  ['quote-interval'] as const,

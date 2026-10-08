@@ -43,6 +43,7 @@ import { AnchorWrap } from '@/lib/useCardFlash'
 import { CAP_LABELS, TIER_RANK, tierRank, tierStyle, TierTag } from '@/lib/capability-labels'
 import { toast } from '@/components/Toast'
 import { DataSourceEditor } from './DataSourceEditor'
+import { LongbridgeCredentials } from './LongbridgeCredentials'
 import { TickFlowKeySection, TierHelpPopover, useInvalidateTierRelated } from './Keys'
 
 const DATASET_LABEL: Record<string, string> = {
@@ -653,6 +654,9 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
 
   const switchProvider = useMutation({
     mutationFn: async (name: string) => {
+      if (name === 'longbridge') {
+        return api.updateDataProviders({ realtime_data_provider: name })
+      }
       // 一键套用: 该源适配了哪些数据集就接管哪些, 其余回默认
       if (name === 'tickflow') {
         return api.updateDataProviders(DEFAULT_ROUTING)
@@ -781,7 +785,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                 key={item.name}
                 onClick={() => {
                   // 未就绪插件仅当支持界面配 Key 时可点开(进详情配置); 其余不可选
-                  if (pluginUnavailable && !plugin?.api_key_env) return
+                  if (pluginUnavailable && !plugin?.api_key_env && item.name !== 'longbridge') return
                   setSelected(item.name)
                   // 只有用户自定义源 (YAML) 才进编辑器; tickflow 和插件不可编辑
                   if (customNames.has(item.name)) {
@@ -789,7 +793,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                   }
                 }}
                 className={`relative text-left rounded-lg border px-3.5 py-3 transition-all ${
-                  pluginUnavailable && !plugin?.api_key_env
+                  pluginUnavailable && !plugin?.api_key_env && item.name !== 'longbridge'
                     ? 'border-border/40 bg-elevated/10 opacity-70'
                     : isSelected
                       ? 'border-accent/50 bg-accent/5 ring-1 ring-accent/20 cursor-pointer'
@@ -817,6 +821,10 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                 {/* 能力芯片: 服务中 / 已适配 / 档位锁定 */}
                 <div className="mt-2">
                   <CapabilityChips caps={chipCaps} servingSet={servingSet} isTickFlow={isTf} />
+                  {item.name === 'longbridge' && <>
+                    <div className="mt-1 text-[10px] text-secondary">实时行情 · CN / HK / US</div>
+                    <LongbridgeCredentials />
+                  </>}
                 </div>
 
                 {/* 底部: 状态提示 + 操作 */}
@@ -830,7 +838,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                   </span>
                   <div className="flex items-center gap-1 shrink-0">
                     {pluginUnavailable ? (
-                      plugin?.runtime !== 'none' && (
+                      plugin?.runtime !== 'none' && item.name !== 'longbridge' && (
                         installing ? (
                           <span className="inline-flex items-center gap-1 text-[10px] text-accent">
                             <RefreshCw className="h-2.5 w-2.5 animate-spin" /> 安装中...
@@ -852,9 +860,9 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                           disabled={switchProvider.isPending}
                           className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-accent/10 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
                         >
-                          套用
+                          {item.name === 'longbridge' && effProvider.realtime === 'longbridge' ? '已套用' : '套用'}
                         </button>
-                        {plugin && plugin?.runtime !== 'none' && (
+                        {plugin && plugin?.runtime !== 'none' && item.name !== 'longbridge' && (
                           uninstalling ? (
                             <RefreshCw className="h-2.5 w-2.5 animate-spin text-muted" />
                           ) : (
@@ -867,7 +875,7 @@ export function SettingsDataSourcesPanel({ highlight }: { highlight?: string } =
                               卸载
                             </button>
                           )
-                        )}
+                          )}
                       </>
                     )}
                   </div>
@@ -1039,13 +1047,14 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
       <div className="mt-5 pt-5 border-t border-border grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-6 items-start">
         <div className="min-w-0">
           {/* 独立状态行仅用于无 Key 配置区的插件; 有 Key 区时「状态」行已展示, 避免重复 */}
-          {!plugin.available && !plugin.api_key_env && (
+          {!plugin.available && !plugin.api_key_env && plugin.name !== 'longbridge' && (
             <div className="flex items-center gap-3">
               <span className="text-xs text-muted">{plugin.status}</span>
             </div>
           )}
 
           {/* API Key 配置 (声明了 api_key_env 的插件) */}
+          {plugin.name === 'longbridge' && <LongbridgeCredentials />}
           {plugin.api_key_env && (
             <div className={plugin.available ? 'mt-4' : ''}>
               <PluginKeyConfig plugin={plugin} />

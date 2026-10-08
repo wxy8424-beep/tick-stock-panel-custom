@@ -1879,6 +1879,15 @@ export interface PluginDataSourceItem {
   api_key_masked?: string  // 当前生效 Key 的脱敏串 (secrets.json 优先, .env 兜底; 与 TickFlow Key 同一展示契约)
 }
 
+export interface LongbridgeCredentialStatus {
+  app_key_masked: string
+  app_secret_configured: boolean
+  access_token_configured: boolean
+  status: 'unconfigured' | 'sdk_missing' | 'available'
+}
+
+export type LongbridgeCredentialResult = Partial<LongbridgeCredentialStatus> & { ok: boolean; reason?: string }
+
 /** 数据源路由偏好字段 (每个能力一个, 与后端能力注册表一一对应) */
 export type ProviderField =
   | 'daily_data_provider'
@@ -2274,6 +2283,13 @@ export const api = {
       `/api/settings/plugins/${encodeURIComponent(name)}/install`,
       { method: 'DELETE' },
     ),
+  longbridgeCredentials: () => request<LongbridgeCredentialStatus>('/api/settings/longbridge-credentials'),
+  saveLongbridgeCredentials: (credentials: { app_key: string; app_secret: string; access_token: string }) =>
+    request<LongbridgeCredentialResult>('/api/settings/longbridge-credentials', {
+      method: 'POST', body: JSON.stringify(credentials), quiet: true,
+    }),
+  clearLongbridgeCredentials: () => request<LongbridgeCredentialResult>('/api/settings/longbridge-credentials', { method: 'DELETE' }),
+
   savePluginKey: (plugin: string, apiKey: string) => {
     // 先探后存: 后端会用候选 Key 实探一次, 探测超时 10s + 余量
     const controller = new AbortController()

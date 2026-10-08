@@ -1,0 +1,10 @@
+name: longbridge
+display_name: Longbridge
+runtime: python
+entry: app.plugins.longbridge.provider:LongbridgeProvider
+check: app.plugins.longbridge.provider:availability
+datasets:
+  - realtime
+description: "官方批量报价，仅 realtime；按标的快照。CN 成交量单位未获确认前不进入 CN 写盘；HK/US 使用独立内存缓存。"
+install_hint: "在 backend 使用 uv sync --frozen 安装锁定依赖"
+homepage: https://open.longbridge.com/zh-CN/docs

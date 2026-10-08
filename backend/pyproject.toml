@@ -40,6 +40,7 @@ dependencies = [
     # Watchlist screenshot OCR (Tesseract)
     "pytesseract>=0.3.10",
     "Pillow>=10.0",
+    "longbridge>=5.2.0",
 ]
 
 [project.optional-dependencies]
