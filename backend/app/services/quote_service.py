@@ -34,6 +34,7 @@ from datetime import date, datetime, time as dt_time
 
 import polars as pl
 
+from app.market_session import MarketSession, get_market_session, market_from_symbol
 from app.market_time import CN_TZ, cn_now, cn_today
 from app.parquet import scan_daily_parquet
 from app.polars_guard import guarded_collect
@@ -632,7 +633,7 @@ class QuoteService:
                 # 线程继续存活 + 分片 sleep, resume() 后即时恢复, 无需重启线程。
                 if not self._paused:
                     phase = self._market_phase()
-                    if self._should_fetch_for_phase(phase):
+                    if self._should_poll_for_market("CN", cn_phase=phase):
                         is_final = phase in {"morning_final", "close_final"}
                         ok = self._fetch_quotes(
                             final=is_final,
@@ -867,12 +868,10 @@ class QuoteService:
             if not isinstance(symbol, str) or "." not in symbol:
                 reason = "缺少有效 symbol"
             else:
-                code, _, suffix = symbol.rpartition(".")
-                market = {"SH": "CN", "SZ": "CN", "BJ": "CN", "HK": "HK", "US": "US"}.get(suffix)
-                if not code or market is None:
-                    reason = "未知市场后缀"
-                elif market == "CN" and not (len(code) == 6 and code.isascii() and code.isdigit()):
-                    reason = "不符合 CN 证券代码格式"
+                suffix = symbol.rpartition(".")[2]
+                market = market_from_symbol(symbol)
+                if market is None:
+                    reason = "未知市场后缀或证券代码格式无效"
                 else:
                     for key in ("market", "region"):
                         value = record.get(key)
@@ -1287,6 +1286,24 @@ class QuoteService:
 
     def _should_fetch_for_phase(self, phase: str) -> bool:
         return self._should_poll_for_phase(phase)
+
+    @staticmethod
+    def get_market_session(market: str, now: datetime | None = None) -> MarketSession:
+        """实时调度/快照消费可按市场查询时钟; calendar unknown 不等于确认开市。"""
+        return get_market_session(market, now)
+
+    def _should_poll_for_market(self, market: str, *, cn_phase: str | None = None) -> bool:
+        """市场轮询时间资格, 不表示 Provider 已具备取数能力。
+
+        CN 保留预热、日历探针和 final; HK/US 仅提供 regular clock 门控,
+        未来数据源须另核实交易日。当前循环只执行已有 CN 拉取, 不开启港美任务。
+        """
+        if market == "CN":
+            phase = cn_phase if cn_phase is not None else self._market_phase()
+            return self._should_fetch_for_phase(phase)
+        if market in {"HK", "US"}:
+            return self.get_market_session(market).is_regular_session
+        return False
 
     def _is_trading_hours(self) -> bool:
         """行情轮询窗口(兼容旧调用): 包含盘前预热和未完成的午休/收盘定版。"""
