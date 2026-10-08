@@ -7,6 +7,44 @@ import { toast } from '@/components/Toast'
 
 const BASE = ''
 
+export interface HKRow {
+  symbol?: string
+  name?: string
+  market?: string
+  currency?: string
+  last_price?: number | null
+  change_pct?: number | null
+  open?: number | null
+  high?: number | null
+  low?: number | null
+  amount?: number | null
+  timestamp?: number
+  inflow?: number | null
+  net_inflow?: number | null
+  reason?: string
+  labels?: string[]
+  description?: string
+  ex_date?: string
+  record_date?: string
+  payment_date?: string
+  [field: string]: unknown
+}
+export interface HKSection {
+  status: 'ok' | 'empty' | 'error' | 'unavailable'
+  mode: 'LIVE' | 'DAILY' | 'DERIVED' | 'UNAVAILABLE'
+  source: string
+  updated_at: string | null
+  data: HKRow[] | HKRow | null
+  error: string | null
+}
+export const HK_SECTION_KEYS = ['daily_stocks', 'daily_etfs', 'capital_flow', 'morning_accumulation', 'closing_accumulation', 'industry_flow', 'concept_flow', 'fundamentals', 'dividends', 'movers', 'block_trades', 'move_reasons'] as const
+export type HKSectionKey = typeof HK_SECTION_KEYS[number]
+export type HKDashboardResponse = Record<HKSectionKey, HKSection> & {
+  market: { code: 'HK'; timezone: string; local_time: string; session_state: string; calendar_status: string }
+  updated_at: string
+  focus_symbol: string | null
+}
+
 type RequestOptions = RequestInit & {
   /** 为 true 时不弹错误 toast（由调用方自行汇总提示，如多图串行队列） */
   quiet?: boolean
@@ -2188,6 +2226,7 @@ export interface SectorRotationUniverseItem {
 
 // ===== API surface =====
 export const api = {
+  hkDashboard: (symbol?: string) => request<HKDashboardResponse>(`/api/dashboard/hk${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   health: () => request<{ status: string; version: string; mode: string }>('/health'),
 
   // ===== Auth (访问认证) =====

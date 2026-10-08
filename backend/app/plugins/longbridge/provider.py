@@ -139,6 +139,7 @@ class LongbridgeProvider:
         self.config = _Config()
         self._lock = threading.Lock()
         self._context = None
+        self._dashboard_contexts: dict[str, object] = {}
         self._metadata: dict[str, dict] = {}
         self.last_errors: list[dict] = []
 
@@ -146,6 +147,7 @@ class LongbridgeProvider:
         with self._lock:
             # SDK 5.2.0 无公开 close; 最后一个 Python 引用释放 Rust context。
             self._context = None
+            self._dashboard_contexts.clear()
             self._metadata.clear()
 
     def _get_context(self):
@@ -159,6 +161,36 @@ class LongbridgeProvider:
             )
             self._context = sdk.QuoteContext(config)
         return self._context
+
+    def dashboard_request(self, kind: str, method: str, *args, **kwargs):
+        """Allowlisted read-only Dashboard calls; reuse credentials and contexts.
+
+        These are not TSP datasets: the plugin remains realtime-only.
+        The existing lock serializes SDK calls with realtime polling.
+        """
+        allowed = {
+            "quote": {"quote", "static_info", "capital_flow"},
+            "market": {"top_movers"},
+            "fundamental": {"dividend_detail"},
+        }
+        if method not in allowed.get(kind, set()):
+            raise ValueError("unsupported read-only dashboard method")
+        with self._lock:
+            if kind == "quote":
+                context = self._get_context()
+            else:
+                if kind not in self._dashboard_contexts:
+                    credentials = _credentials()
+                    if not all(credentials):
+                        raise ValueError("missing credential configuration")
+                    sdk = _sdk()
+                    config = sdk.Config.from_apikey(
+                        *credentials, enable_print_quote_packages=False, enable_overnight=False,
+                    )
+                    context_type = sdk.MarketContext if kind == "market" else sdk.FundamentalContext
+                    self._dashboard_contexts[kind] = context_type(config)
+                context = self._dashboard_contexts[kind]
+            return getattr(context, method)(*args, **kwargs)
 
     @staticmethod
     def configured_symbols() -> list[str]:

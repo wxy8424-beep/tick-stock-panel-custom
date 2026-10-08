@@ -20,6 +20,7 @@ export const QK = {
   quoteStatus:    ['quote-status'] as const,
   quoteInterval:  ['quote-interval'] as const,
   overviewMarket: (asOf?: string) => ['overview-market', asOf ?? 'latest'] as const,
+  hkDashboard: (symbol?: string) => ['hk-dashboard', symbol ?? 'default'] as const,
   indexQuotes:    ['index-quotes'] as const,
 
   // Watchlist

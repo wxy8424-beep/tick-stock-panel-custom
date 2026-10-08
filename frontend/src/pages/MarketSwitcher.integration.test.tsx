@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Dashboard } from './Dashboard'
 import { Watchlist } from './Watchlist'
@@ -51,28 +51,48 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
 
 async function render(page: React.ReactNode, path: string) {
-  await act(async () => { root.render(<MemoryRouter initialEntries={[path]}>{page}</MemoryRouter>) })
+  function Location() {
+    const location = useLocation()
+    return <output data-location>{location.pathname}{location.search}</output>
+  }
+  await act(async () => { root.render(<MemoryRouter initialEntries={[path]}>{page}<Location /></MemoryRouter>) })
 }
-function assertControls() {
+function assertControls(hkEnabled = false) {
   const group = host.querySelector('[aria-label="市场选择"]')!
   expect(group).not.toBeNull()
   const buttons = group.querySelectorAll('button')
   expect(buttons[0].getAttribute('aria-pressed')).toBe('true')
-  expect(buttons[1].disabled).toBe(true)
+  expect(buttons[1].disabled).toBe(!hkEnabled)
   expect(buttons[2].disabled).toBe(true)
   return buttons
 }
 
-it('Dashboard retains its CN title/grid and query identity after disabled clicks', async () => {
-  await render(<Dashboard />, '/')
+it('Dashboard preserves CN queries/grid and other URL parameters through CN -> HK -> CN', async () => {
+  await render(<Dashboard />, '/?keep=original')
   expect(host.textContent).toContain('市场看板')
   expect(host.textContent).toContain('原 A 股看板网格')
   expect(fixtures.queryKeys).toContainEqual(['overview-market', 'latest'])
   const count = fixtures.queryKeys.length
-  const buttons = assertControls()
-  await act(async () => { buttons[1].click(); buttons[2].click() })
+  const buttons = assertControls(true)
+  await act(async () => buttons[2].click())
   expect(fixtures.queryKeys).toHaveLength(count)
   expect(host.textContent).toContain('原 A 股看板网格')
+  await act(async () => buttons[1].click())
+  expect(host.querySelector('h1')?.textContent).toBe('港股市场')
+  expect(host.querySelector('[data-location]')?.textContent).toBe('/?keep=original&market=HK')
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="市场选择"] button')!.click())
+  expect(host.querySelector('h1')?.textContent).toBe('市场看板')
+  expect(host.textContent).toContain('原 A 股看板网格')
+  expect(host.querySelector('[data-location]')?.textContent).toBe('/?keep=original')
+})
+
+it('direct URL and refresh initial state render HK without mounting CN queries', async () => {
+  await render(<Dashboard />, '/?market=HK')
+  expect(host.querySelector('h1')?.textContent).toBe('港股市场')
+  expect(fixtures.queryKeys.some(key => key[0] === 'overview-market')).toBe(false)
+  const buttons = host.querySelectorAll<HTMLButtonElement>('[aria-label="市场选择"] button')
+  expect(buttons[1].getAttribute('aria-pressed')).toBe('true')
+  expect(buttons[2].disabled).toBe(true)
 })
 
 it('Watchlist retains CN filters and the original query without changing on disabled clicks', async () => {

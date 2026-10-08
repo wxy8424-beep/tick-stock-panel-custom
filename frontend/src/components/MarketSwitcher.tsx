@@ -6,6 +6,7 @@ interface Props {
   value?: Market
   onChange?: (market: Market) => void
   className?: string
+  enabledMarkets?: readonly Market[]
 }
 
 const markets: { value: Market; label: string }[] = [
@@ -14,24 +15,24 @@ const markets: { value: Market; label: string }[] = [
   { value: 'US', label: '美股' },
 ]
 
-/** Only CN page content is implemented; unavailable markets never trigger a change. */
-export function MarketSwitcher({ value = 'CN', onChange, className }: Props) {
+/** Availability is page-specific; other pages retain CN-only defaults. */
+export function MarketSwitcher({ value = 'CN', onChange, className, enabledMarkets = ['CN'] }: Props) {
   return (
     <div role="group" aria-label="市场选择" className={cn('inline-flex max-w-full items-center rounded-btn border border-border bg-base/60 p-0.5', className)}>
       {markets.map(market => (
         <button
           key={market.value}
           type="button"
-          disabled={market.value !== 'CN'}
+          disabled={!enabledMarkets.includes(market.value)}
           aria-pressed={value === market.value}
-          title={market.value === 'CN' ? 'A股' : `${market.label} · 待开发`}
-          onClick={() => onChange?.(market.value)}
+          title={enabledMarkets.includes(market.value) ? market.label : `${market.label} · 待开发`}
+          onClick={() => { if (enabledMarkets.includes(market.value)) onChange?.(market.value) }}
           className={cn('inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-[5px] px-2.5 text-xs font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed',
-            market.value === 'CN' && value === 'CN' ? 'bg-accent text-white shadow-sm' : 'text-secondary',
+            value === market.value ? 'bg-accent text-white shadow-sm' : 'text-secondary',
           )}
         >
           {market.label}
-          {market.value !== 'CN' && <span className="text-[10px] text-muted">待开发</span>}
+          {!enabledMarkets.includes(market.value) && <span className="text-[10px] text-muted">待开发</span>}
         </button>
       ))}
     </div>
@@ -39,10 +40,10 @@ export function MarketSwitcher({ value = 'CN', onChange, className }: Props) {
 }
 
 /** First toolbar beneath a market page's existing title and actions. */
-export function MarketSwitcherBar({ className }: { className?: string }) {
+export function MarketSwitcherBar({ className, ...props }: Props) {
   return (
     <div className={cn('min-w-0 shrink-0 border-b border-border px-5 py-1.5', className)}>
-      <MarketSwitcher value="CN" />
+      <MarketSwitcher {...props} />
     </div>
   )
 }

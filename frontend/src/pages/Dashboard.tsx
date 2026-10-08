@@ -1,6 +1,7 @@
-import { MarketSwitcherBar } from '@/components/MarketSwitcher'
+import { MarketSwitcherBar, type Market } from '@/components/MarketSwitcher'
+import { HongKongDashboard } from '@/components/dashboard/HongKongDashboard'
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUpRight, Check, Database, Gauge, GripVertical, Info, Loader2, Play, RefreshCw, RotateCcw, Sparkles, Timer } from 'lucide-react'
@@ -25,6 +26,21 @@ import { cloneItems, GRID_COLS, type WidgetType } from '@/components/dashboard/l
 type PreviewSource = 'gain' | 'loss' | 'amount' | 'active' | 'concept' | 'industry' | 'alert'
 
 export function Dashboard() {
+  const [params, setParams] = useSearchParams()
+  const market: Market = params.get('market') === 'HK' ? 'HK' : 'CN'
+  const changeMarket = (next: Market) => {
+    if (next === 'US') return
+    setParams(previous => {
+      const updated = new URLSearchParams(previous)
+      if (next === 'HK') updated.set('market', 'HK')
+      else updated.delete('market')
+      return updated
+    })
+  }
+  return market === 'HK' ? <HongKongDashboard onMarketChange={changeMarket} /> : <ChinaDashboard onMarketChange={changeMarket} />
+}
+
+function ChinaDashboard({ onMarketChange }: { onMarketChange: (market: Market) => void }) {
   const qc = useQueryClient()
   const [selectedDate, setSelectedDate] = useState<string | undefined>()
   const [manualFetching, setManualFetching] = useState(false)
@@ -303,7 +319,7 @@ export function Dashboard() {
         </div>
       </div>
 
-      <MarketSwitcherBar className="mb-1.5 rounded-card border px-3" />
+      <MarketSwitcherBar value="CN" enabledMarkets={['CN', 'HK']} onChange={onMarketChange} className="mb-1.5 rounded-card border px-3" />
 
       {/* 自选实时模式提示: 大盘看板为盘后数据, 仅自选股实时。避免用户误读为全市场实时。 */}
       {quoteMode === 'watchlist' && (
