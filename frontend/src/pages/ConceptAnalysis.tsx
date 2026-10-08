@@ -339,7 +339,7 @@ export function ConceptAnalysis() {
     return (
       <>
         <div className="flex h-full flex-col">
-          <PageHeader
+          <PageHeader showMarketSwitcher
             title="概念分析"
             right={
               <button onClick={() => setShowConfig(true)} className="p-1.5 text-muted hover:bg-surface hover:text-accent" title="配置数据源">
@@ -364,7 +364,7 @@ export function ConceptAnalysis() {
 
   return (
     <>
-      <PageHeader
+      <PageHeader showMarketSwitcher
         title="概念分析"
         subtitle={`${marketQuery.data?.as_of ?? rowsQuery.data?.date ?? '最新'} · ${stats.length} 个概念 · ${totalSymbols} 只标的`}
         right={
