@@ -1,7 +1,7 @@
 """Independent US read model for the 13 CN layout slots, never CN data.
 
 SDK contract: https://longbridge.github.io/openapi/python/reference_all/
-Breadth is an explicitly limited observed sample, never US market breadth.
+Breadth explicitly reports coverage of the provider's available securities.
 OptionVolumeStats only has call_volume/put_volume; no OI or invented score.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from statistics import median
 
 from app.market_session import get_market_session
@@ -29,7 +29,7 @@ class OptionDataUnavailableError(Exception):
 
 
 def validate_symbol(symbol: str) -> str:
-    if not re.fullmatch(r"[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*\.US", symbol):
+    if not re.fullmatch(r"[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*-?\.US", symbol):
         raise ValueError("invalid US stock symbol")
     return symbol
 
@@ -62,13 +62,127 @@ def sample_stats(rows):
 
 
 class USDashboardService:
-    def __init__(self, provider_getter=_provider, *, clock=None, monotonic=time.monotonic):
+    def __init__(self, provider_getter=_provider, *, clock=None, monotonic=time.monotonic, universe_enabled=False):
         self.provider_getter = provider_getter
         self.clock = clock or (lambda: datetime.now(UTC))
         self.monotonic = monotonic
         self.cache: OrderedDict = OrderedDict()
         self.lock = threading.RLock()
         self.provider = None
+        self.universe_enabled = universe_enabled
+        self.universe_lock = threading.Lock()
+        self.universe_stop = threading.Event()
+        self.universe_thread = None
+        self.universe_snapshot = None
+        self.universe_provider = None
+        self.universe_symbols = ()
+        self.universe_rejected = 0
+        self.universe_checked_at = 0
+        self.universe_status = "loading"
+        self.universe_error = None
+
+    def close(self):
+        self.universe_stop.set()
+        if self.universe_thread:
+            self.universe_thread.join(timeout=3)
+
+    def _ensure_universe_worker(self):
+        if not self.universe_enabled:
+            return
+        with self.universe_lock:
+            if self.universe_thread is None and not self.universe_stop.is_set():
+                self.universe_thread = threading.Thread(target=self._universe_loop, name="us-quote-universe", daemon=True)
+                self.universe_thread.start()
+
+    def _universe_loop(self):
+        while not self.universe_stop.is_set():
+            self.refresh_universe()
+            interval = 30 if get_market_session("US", self.clock()).is_regular_session else 300
+            if self.universe_stop.wait(interval):
+                break
+
+    def refresh_universe(self):
+        """One bounded sweep; network outside state locks, publish once after all batches.
+
+        Missing/failed quotes never borrow older rows into the new sweep. A total
+        failure retains the previous snapshot, visibly stale, until recovery.
+        """
+        started = self.clock().isoformat()
+        try:
+            provider = self.provider_getter()
+            with self.universe_lock:
+                if provider is not self.universe_provider:
+                    self.universe_provider = provider
+                    self.universe_symbols = ()
+                    self.universe_snapshot = None
+                    self.universe_rejected = 0
+                symbols = self.universe_symbols
+                self.universe_status = "refreshing" if self.universe_snapshot else "loading"
+                due = not symbols or self.monotonic() - self.universe_checked_at >= 86400
+            if due:
+                raw = provider.get_realtime_universe("US")
+                if not raw or len(raw) > 100000:
+                    raise ValueError("invalid US universe response")
+                symbols = tuple(dict.fromkeys(s for s in raw if _is_us(s)))
+                if not symbols:
+                    raise ValueError("invalid US universe response")
+                with self.universe_lock:
+                    self.universe_symbols = symbols
+                    self.universe_rejected = sum(not _is_us(s) for s in raw)
+                    self.universe_checked_at = self.monotonic()
+            rows = {}
+            failed_batches = 0
+            errors = set()
+            for offset in range(0, len(symbols), 500):
+                if self.universe_stop.is_set():
+                    return
+                chunk = symbols[offset:offset + 500]
+                try:
+                    quotes = provider.get_realtime(list(chunk))
+                    for row in quotes:
+                        if row.get("symbol") not in chunk or row.get("market") != "US":
+                            continue
+                        price = number(row.get("last_price"))
+                        timestamp = number(row.get("timestamp"))
+                        if price is None or price <= 0 or timestamp is None or timestamp <= 0:
+                            continue
+                        if datetime.fromtimestamp(timestamp / 1000, UTC) > self.clock() + timedelta(minutes=2):
+                            continue
+                        rows[row["symbol"]] = {**row, "close": price}
+                    if not quotes:
+                        failed_batches += 1
+                except Exception as error:
+                    failed_batches += 1
+                    errors.add(error_category(error))
+                # Bound shared-provider pressure; interruptible during shutdown.
+                if offset + 500 < len(symbols) and self.universe_stop.wait(.25):
+                    return
+            if self.universe_stop.is_set() or self.provider_getter() is not provider:
+                return
+            finished = self.clock().isoformat()
+            zone = get_market_session("US", self.clock()).timezone
+            dates = {r["symbol"]: datetime.fromtimestamp(r["timestamp"] / 1000, zone).date() for r in rows.values()}
+            latest_date = max(dates.values(), default=None)
+            eligible = [r for r in rows.values() if dates[r["symbol"]] == latest_date]
+            coverage = {"coverage": "Longbridge 美股可用证券清单(含ETF等; 非全部普通股市场保证)",
+                        "requested": len(symbols), "received": len(rows), "failed": len(symbols) - len(rows),
+                        "rejected_symbols": self.universe_rejected,
+                        "statistics_date": latest_date.isoformat() if latest_date else None,
+                        "statistics_received": len(eligible), "stale_quote_count": len(rows) - len(eligible),
+                        "failed_batches": failed_batches, "started_at": started, "completed_at": finished,
+                        "duration_s": (datetime.fromisoformat(finished) - datetime.fromisoformat(started)).total_seconds(),
+                        "quote_min_timestamp": min((r["timestamp"] for r in rows.values()), default=None),
+                        "quote_max_timestamp": max((r["timestamp"] for r in rows.values()), default=None),
+                        "scope": "provider_universe", "exchange_complete": False}
+            with self.universe_lock:
+                if rows:
+                    self.universe_snapshot = (eligible, coverage)
+                self.universe_status = "ready" if len(rows) == len(symbols) and not self.universe_rejected else "partial" if rows else "stale"
+                self.universe_error = ",".join(sorted(errors)) or None
+        except Exception as error:
+            with self.universe_lock:
+                self.universe_status = "stale" if self.universe_snapshot else "unavailable"
+                self.universe_error = error_category(error)
 
     def _read(self, key, ttl, source, load, mode="LIVE"):
         cached = self.cache.get(key)
@@ -89,6 +203,7 @@ class USDashboardService:
     def get(self, symbol, snapshots):
         if symbol is not None:
             validate_symbol(symbol)
+        self._ensure_universe_worker()
         with self.lock:
             return self._get(symbol, snapshots)
 
@@ -172,12 +287,25 @@ class USDashboardService:
         result["monitor"] = events
         result["activity"] = events
 
+        if self.universe_enabled:
+            with self.universe_lock:
+                snapshot = self.universe_snapshot if provider is self.universe_provider else None
+                status, error = self.universe_status, self.universe_error
+                count = len(self.universe_symbols) if provider is self.universe_provider else 0
+            rows, coverage = snapshot if snapshot else ([], {
+                "coverage": "Longbridge 美股证券清单后台采集中", "requested": count,
+                "received": 0, "failed": 0, "scope": "provider_universe", "exchange_complete": False,
+            })
+            result["sample"] = {**coverage, "status": status, "error": error, "stale": status == "stale"}
+            quoted = section(rows, updated_at=coverage.get("completed_at"), source="Longbridge · 美股证券批量快照")
+
         if quoted["status"] == "error":
             for key in ("kpi", "distribution", "gainers", "losers", "turnover"):
                 result[key] = dict(quoted)
         else:
             def derived(data):
-                return section(data, mode="DERIVED", source="Longbridge · 当前可获取样本派生 · 非全市场", updated_at=quoted["updated_at"])
+                source = "Longbridge · 已覆盖证券派生(统计范围见覆盖信息)" if self.universe_enabled else "Longbridge · 当前可获取样本派生 · 非全市场"
+                return section(data, mode="DERIVED", source=source, updated_at=quoted["updated_at"])
 
             stats = sample_stats(rows)
             result["kpi"] = derived(stats if stats["total"] else None)
@@ -189,9 +317,9 @@ class USDashboardService:
                     counts[sum(pct >= bound for bound in bounds)] += 1
             labels = ("<-7%", "-7~-5%", "-5~-3%", "-3~0%", "0~3%", "3~5%", "5~7%", "≥7%")
             result["distribution"] = derived({"breadth": stats, "bins": [{"label": label, "count": count} for label, count in zip(labels, counts, strict=True)]} if stats["total"] else None)
-            result["gainers"] = derived(sorted((row for row in rows if row["change_pct"] is not None and row["change_pct"] > 0), key=lambda row: row["change_pct"], reverse=True))
-            result["losers"] = derived(sorted((row for row in rows if row["change_pct"] is not None and row["change_pct"] < 0), key=lambda row: row["change_pct"]))
-            result["turnover"] = derived(sorted((row for row in rows if row["amount"] is not None), key=lambda row: row["amount"], reverse=True))
+            result["gainers"] = derived(sorted((row for row in rows if row["change_pct"] is not None and row["change_pct"] > 0), key=lambda row: row["change_pct"], reverse=True)[:20])
+            result["losers"] = derived(sorted((row for row in rows if row["change_pct"] is not None and row["change_pct"] < 0), key=lambda row: row["change_pct"])[:20])
+            result["turnover"] = derived(sorted((row for row in rows if row["amount"] is not None and (not self.universe_enabled or row.get("currency") == "USD")), key=lambda row: row["amount"], reverse=True)[:20])
 
         def options():
             try:

@@ -202,6 +202,13 @@ class LongbridgeProvider:
         symbols = [*configured, *(row["symbol"] for row in watchlist.list_symbols())]
         return list(dict.fromkeys(s for s in symbols if market_from_symbol(s) is not None))
 
+    def get_realtime_universe(self, market: str) -> list[str]:
+        """Official available securities, not an exchange-completeness guarantee."""
+        if market != "US":
+            raise ValueError("unsupported universe market")
+        with self._lock:
+            return [row.symbol for row in self._get_context().security_list(_sdk().Market.US)]
+
     def _normalize(self, quote) -> dict:
         symbol = quote.symbol
         market = market_from_symbol(symbol)
@@ -270,6 +277,7 @@ class LongbridgeProvider:
                         self.last_errors.append({"stage": "metadata", "batch": offset // MAX_SYMBOLS,
                                                  "reason": error_category(error)})
                         logger.warning("Longbridge metadata unavailable: %s", self.last_errors[-1]["reason"])
+                rejected = 0
                 for quote in quotes or []:
                     try:
                         if quote.symbol not in chunk:
@@ -277,7 +285,11 @@ class LongbridgeProvider:
                         row = self._normalize(quote)
                         rows[row["symbol"]] = row
                     except (AttributeError, ValueError, TypeError, OverflowError, OSError):
-                        logger.warning("Longbridge quote row rejected: invalid response fields")
+                        rejected += 1
+                if rejected:
+                    self.last_errors.append({"stage": "rows", "batch": offset // MAX_SYMBOLS,
+                                             "rejected": rejected, "reason": "invalid_response_fields"})
+                    logger.debug("Longbridge quote batch rejected %d invalid rows", rejected)
         return list(rows.values())
 
     def get_realtime_for_markets(self, markets: list[str]) -> list[dict]:

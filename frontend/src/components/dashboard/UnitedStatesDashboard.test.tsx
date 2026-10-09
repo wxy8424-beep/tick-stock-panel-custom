@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { UnitedStatesDashboard, US_LAYOUT_KEY } from './UnitedStatesDashboard'
+import { UnitedStatesDashboard, US_LAYOUT_KEY, normalizeUSLayout } from './UnitedStatesDashboard'
 import { DEFAULT_LAYOUT } from './registry'
 import { US_SECTION_KEYS, type USDashboardResponse, type USSection } from '@/lib/api'
 import type { DashboardGridProps } from './DashboardGrid'
@@ -38,15 +38,28 @@ async function render() {
   await act(async () => { root.render(<QueryClientProvider client={client}><UnitedStatesDashboard onMarketChange={vi.fn()} /></QueryClientProvider>); await new Promise(resolve => setTimeout(resolve, 20)) })
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
 }
-it('uses exactly CN 13 default slot sizes, Chinese labels and independent US query/storage', async () => {
+it('keeps CN 13 slot types with spacious US metrics, Chinese labels and independent query/storage', async () => {
   localStorage.setItem('cn-layout-sentinel', 'untouched')
   await render()
-  expect(mock.grid.mock.lastCall?.[0].items).toEqual(DEFAULT_LAYOUT)
+  const comfortable = normalizeUSLayout(null)
+  expect(mock.grid.mock.lastCall?.[0].items).toEqual(comfortable)
+  expect(mock.grid.mock.lastCall?.[0].rowHeight).toBe(48)
+  expect(mock.grid.mock.lastCall?.[0].gap).toBe(10)
   expect([...host.querySelectorAll('[data-us-slot]')].map(node => node.getAttribute('data-us-slot'))).toEqual(DEFAULT_LAYOUT.map(item => item.t))
   for (const text of ['美股市场看板', '看涨期权成交量', '看跌期权成交量', '波动率超过20日均值', '媒体', '非全市场', '暂不可用']) expect(host.textContent).toContain(text)
   expect(client.getQueryCache().getAll().every(query => query.queryKey[0] === 'us-dashboard')).toBe(true)
-  expect(JSON.parse(localStorage.getItem(US_LAYOUT_KEY)!).items).toEqual(DEFAULT_LAYOUT)
+  expect(JSON.parse(localStorage.getItem(US_LAYOUT_KEY)!).items).toEqual(comfortable)
   expect(localStorage.getItem('cn-layout-sentinel')).toBe('untouched')
+})
+
+it('expands saved short KPI cards without overlaps or repeatedly shifting the saved layout', () => {
+  const expanded = normalizeUSLayout({ v: 1, items: DEFAULT_LAYOUT })
+  expect(expanded.find(item => item.t === 'kpi')?.h).toBe(3)
+  expect(normalizeUSLayout({ v: 1, items: expanded })).toEqual(expanded)
+  for (let i = 0; i < expanded.length; i++) for (const other of expanded.slice(i + 1)) {
+    const item = expanded[i]
+    expect(item.x < other.x + other.w && other.x < item.x + item.w && item.y < other.y + other.h && other.y < item.y + item.h).toBe(false)
+  }
 })
 it('opens real US row and navigates only its actual list without CN preview queries', async () => {
   await render()
@@ -67,4 +80,24 @@ it('section failure keeps other real modules visible', async () => {
   expect(host.textContent).toContain('行情权限不足')
   expect(host.textContent).toContain('苹果')
   expect(host.querySelectorAll('[data-us-slot]')).toHaveLength(13)
+})
+
+it('shows actual universe coverage, missing batches and snapshot age without claiming exchange completeness', async () => {
+  const data = response()
+  data.sample = { coverage: 'Longbridge 美股可用证券清单（含ETF等；非全部普通股市场保证）', requested: 16117, received: 15000,
+    failed: 1117, failed_batches: 2, rejected_symbols: 0, status: 'partial', scope: 'provider_universe', exchange_complete: false,
+    completed_at: '2026-10-08T14:00:00Z' }
+  mock.get.mockResolvedValue(data)
+  await render()
+  for (const label of ['成功 15000/16117', '部分获取', '缺失 1117', '失败批次 2', '逐批快照，非同一瞬间', '覆盖证券涨幅榜']) expect(host.textContent).toContain(label)
+  expect(host.textContent).not.toContain('样本涨幅榜')
+  expect(host.querySelectorAll('[data-us-slot]')).toHaveLength(13)
+})
+
+it('explicitly shows retained stale snapshot after background failure', async () => {
+  const data = response()
+  data.sample = { ...data.sample, scope: 'provider_universe', status: 'stale', stale: true, error: 'network' }
+  mock.get.mockResolvedValue(data)
+  await render()
+  expect(host.textContent).toContain('保留上轮快照（刷新失败）')
 })

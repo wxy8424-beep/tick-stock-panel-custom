@@ -1,10 +1,20 @@
 """US-only read aggregation; no CN datasets or trading routes."""
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.services.us_dashboard_service import USDashboardService, validate_symbol
 
-router = APIRouter(prefix="/api/dashboard", tags=["us-dashboard"])
-service = USDashboardService()
+service = USDashboardService(universe_enabled=True)
+
+
+@asynccontextmanager
+async def lifespan(app):
+    yield
+    service.close()
+
+
+router = APIRouter(prefix="/api/dashboard", tags=["us-dashboard"], lifespan=lifespan)
 
 
 @router.get("/us")

@@ -56,7 +56,14 @@ export interface USStats {
 export type USDashboardResponse = Record<USSectionKey, USSection> & {
   market: { code: 'US'; timezone: string; local_time: string; session_state: string; calendar_status: string }
   updated_at: string; focus_symbol: string | null; focus_quote: MarketSnapshotRow | null
-  sample: { coverage: string; requested: number; received: number }
+  sample: {
+    coverage: string; requested: number; received: number; scope?: 'provider_universe'
+    failed?: number; failed_batches?: number; rejected_symbols?: number; status?: 'loading' | 'refreshing' | 'ready' | 'partial' | 'stale' | 'unavailable'
+    stale?: boolean; error?: string | null; exchange_complete?: boolean
+    started_at?: string; completed_at?: string; duration_s?: number
+    quote_min_timestamp?: number | null; quote_max_timestamp?: number | null
+    statistics_date?: string | null; statistics_received?: number; stale_quote_count?: number
+  }
 }
 
 type RequestOptions = RequestInit & {

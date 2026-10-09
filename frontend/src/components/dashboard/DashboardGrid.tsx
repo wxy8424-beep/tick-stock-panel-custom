@@ -37,9 +37,11 @@ export interface DashboardGridProps {
   onItemsChange: (items: DashboardItem[]) => void
   /** 编辑态由 Dashboard 页头部控制组持有, 受控传入 */
   editing: boolean
+  rowHeight?: number
+  gap?: number
 }
 
-export function DashboardGrid({ ctx, items, onItemsChange, editing, renderItem, widgetLabels }: DashboardGridProps) {
+export function DashboardGrid({ ctx, items, onItemsChange, editing, renderItem, widgetLabels, rowHeight = GRID_ROW_HEIGHT, gap = GRID_MARGIN }: DashboardGridProps) {
   const { width, containerRef, mounted } = useContainerWidth({ measureBeforeMount: true })
 
   const rglLayout = useMemo(
@@ -87,7 +89,7 @@ export function DashboardGrid({ ctx, items, onItemsChange, editing, renderItem, 
         <div className="h-32" />
       ) : isMobile ? (
         /* 移动端: 不挂网格, 纵排 */
-        <div className="space-y-1.5">
+        <div style={{ display: 'flex', flexDirection: 'column', gap }}>
           {items.map(it => (
             <div key={it.i} className="min-h-16">{renderWidget(it)}</div>
           ))}
@@ -96,7 +98,7 @@ export function DashboardGrid({ ctx, items, onItemsChange, editing, renderItem, 
         <GridLayout
           width={width}
           layout={rglLayout}
-          gridConfig={{ cols: GRID_COLS, rowHeight: GRID_ROW_HEIGHT, margin: [GRID_MARGIN, GRID_MARGIN], containerPadding: null, maxRows: Infinity }}
+          gridConfig={{ cols: GRID_COLS, rowHeight, margin: [gap, gap], containerPadding: null, maxRows: Infinity }}
           dragConfig={{
             enabled: editing,
             // 整卡可拖(不限把手); ✕ 移除钮不触发拖拽 — RGL 自动并入 .react-resizable-handle
