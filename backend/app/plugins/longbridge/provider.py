@@ -221,7 +221,10 @@ class LongbridgeProvider:
             return {"status": "unavailable", "reason": reason, "sdk_available": True}
         try:
             return assess_financial_contract(symbol, response)
-        except (ValueError, TypeError, AttributeError, KeyError):
+        except ValueError as error:
+            reason = "financial_period_end_type_invalid" if error.args == ("financial_period_end_type_invalid",) else "financial_response_shape_mismatch"
+            return {"status": "contract_blocked", "reason": reason, "sdk_available": True}
+        except (TypeError, AttributeError, KeyError):
             return {"status": "contract_blocked", "reason": "financial_response_shape_mismatch", "sdk_available": True}
 
     def probe_quantity_contract(self, symbol: str, dataset: str) -> dict:

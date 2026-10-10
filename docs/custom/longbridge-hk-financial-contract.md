@@ -1,5 +1,8 @@
 # Longbridge HK Financial Contract Closure
 
+2026-10-10 后续 fp_end wire → SDK → Python → adapter 证据链见
+[financial-period evidence](longbridge-financial-period-evidence.md)；未获单位/编码/时区证据，HK仍阻塞。
+
 基线：`0ec44bb`。范围仅财务契约与只读验证，数量单位 blocker 不变。
 
 ## 现有项目契约（不修改）

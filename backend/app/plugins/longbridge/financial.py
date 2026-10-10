@@ -13,6 +13,29 @@ FIELDS = {
 }
 
 
+def inspect_period_end(value) -> dict:
+    """Inspect wire type only; no date parsing without encoding/timezone evidence.
+
+    Official FinancialValue schema says optional string report-period-end timestamp.
+    SDK 5.2.0 preserves raw JSON. Neither numeric length nor date-looking text proves
+    an encoding, epoch unit, or business timezone. No original value is returned.
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        reason = "financial_period_end_missing"
+        source_type = "null" if value is None else "string"
+    elif not isinstance(value, str):
+        reason = "financial_period_end_type_invalid"
+        source_type = "non_string"
+    else:
+        reason = "report_period_timestamp_unit_unverified"
+        source_type = "string"
+    return {
+        "status": "contract_blocked", "reason": reason, "source_type": source_type,
+        "encoding": "unverified", "unit": "unverified", "timezone": "unverified",
+        "period_end": None,
+    }
+
+
 def decimal_value(value):
     if value is None or value == "":
         return None
@@ -46,7 +69,10 @@ def financial_candidates(symbol: str, response) -> list[dict]:
                 if target is None or account.get("percent"):
                     continue
                 for value in account.get("values", []):
-                    key = (kind, currency, value.get("year"), value.get("period"), value.get("fp_end"))
+                    source_end = value.get("fp_end")
+                    if inspect_period_end(source_end)["reason"] == "financial_period_end_type_invalid":
+                        raise ValueError("financial_period_end_type_invalid")
+                    key = (kind, currency, value.get("year"), value.get("period"), source_end)
                     row = rows.setdefault(key, {
                         "symbol": symbol, "statement": kind, "currency": currency,
                         "fiscal_year": value.get("year"), "source_period": value.get("period"),
@@ -64,7 +90,8 @@ def financial_rows_ready(rows: list[dict]) -> bool:
         if not row.get("symbol") or not isinstance(row.get("period_end"), str):
             return False
         try:
-            date.fromisoformat(row["period_end"])
+            if date.fromisoformat(row["period_end"]).isoformat() != row["period_end"]:
+                return False
         except ValueError:
             return False
     return True
@@ -84,6 +111,7 @@ def assess_financial_contract(symbol: str, response) -> dict:
         name for row in rows for mapping in FIELDS.values() for name in mapping.values()
         if row.get(name) is not None
     })
+    period_evidence = [inspect_period_end(row["source_fp_end"]) for row in rows]
     return {
         "status": "contract_blocked",
         "reason": "report_period_timestamp_unit_unverified" if rows else "financial_fields_unmapped",
@@ -94,6 +122,13 @@ def assess_financial_contract(symbol: str, response) -> dict:
         "available_statements": sorted({row["statement"] for row in rows}),
         "mapped_fields": fields,
         "missing_optional_fields": ["announce_date", "basic_eps", "diluted_eps", "yoy", "ratio"],
+        "period_end_evidence": {
+            "source_field": "fp_end", "semantic": "report_period_end_timestamp",
+            "encoding": "unverified", "unit": "unverified", "timezone": "unverified",
+            "source_types": sorted({item["source_type"] for item in period_evidence}),
+            "blockers": sorted({item["reason"] for item in period_evidence}),
+            "conversion_performed": False,
+        },
     }
 
 
