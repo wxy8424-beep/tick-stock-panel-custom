@@ -6,6 +6,9 @@ const LABELS: Record<MarketCapability['status'], string> = {
 }
 const REASONS: Record<string, string> = {
   quantity_unit_unknown: '数量单位尚未确认',
+  candlestick_volume_unit_evidence_missing: '日K成交量缺少市场对应的官方单位证据',
+  minute_candlestick_volume_unit_evidence_missing: '分钟K成交量缺少市场对应的官方单位证据',
+  depth_volume_unit_evidence_missing: '盘口挂单量缺少市场对应的官方单位证据',
   quantity_unit_incompatible: '数量单位与现有契约不兼容',
   report_period_timestamp_unit_unverified: '报告期时间戳单位尚未确认',
   requires_us_token_or_market_context: '当前凭证或市场上下文不可用',

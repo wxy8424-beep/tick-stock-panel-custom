@@ -1,7 +1,12 @@
 # Longbridge realtime-only
 
+daily/minute/depth 的单位证据与只读诊断见
+[quantity-unit evidence matrix](../../../../docs/custom/longbridge-quantity-unit-evidence.md)。
+`uv run --frozen python -m app.plugins.longbridge.quantity_smoke` 仅诊断，不启用数据集或写盘。
+
 使用官方 `longbridge` SDK 的 `Config.from_apikey` 与 `QuoteContext`。
-只调用 `quote()` 和 `static_info()`，无交易、账户、订阅或历史行情能力。
+正式 realtime dataset 调用 `quote()` 和 `static_info()`，无交易、账户、订阅或历史数据集能力。
+显式 quantity diagnostic 另有只读历史K线/盘口请求，不参与正式路由或写盘。
 SDK 按 `backend/uv.lock` 安装：`uv sync --frozen`。
 
 认证优先读取 `data/user_data/secrets.json` 中完整的三凭证 bundle。

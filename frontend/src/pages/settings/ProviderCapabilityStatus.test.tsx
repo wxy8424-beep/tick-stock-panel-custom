@@ -20,6 +20,20 @@ it('shows contract and safe reason', () => {
 it('shows unsupported without enabling a route', () => {
   expect(text('unsupported')).toContain('暂不支持')
 })
+it('explains endpoint-specific unit evidence without showing supported', () => {
+  for (const [reason, label] of [
+    ['candlestick_volume_unit_evidence_missing', '日K成交量'],
+    ['minute_candlestick_volume_unit_evidence_missing', '分钟K成交量'],
+    ['depth_volume_unit_evidence_missing', '盘口挂单量'],
+  ]) {
+    const html = text('contract_blocked', reason)
+    expect(html).toContain(label)
+    expect(html).toContain('官方单位证据')
+    expect(html).toContain('契约阻塞')
+    expect(html).not.toContain('服务中')
+    expect(html).not.toContain('已适配')
+  }
+})
 it('shows partial financial support and current context unavailability', () => {
   const html = renderToStaticMarkup(<ProviderCapabilityStatus markets={{
     CN: { status: 'empty' }, HK: { status: 'supported' },

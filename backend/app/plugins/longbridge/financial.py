@@ -98,12 +98,11 @@ def assess_financial_contract(symbol: str, response) -> dict:
 
 
 def market_capabilities() -> dict:
+    from app.plugins.longbridge.quantity import quantity_capabilities
+
     result = {}
     for dataset, status, reason in (
         ("realtime", "supported", None),
-        ("daily", "contract_blocked", "quantity_unit_unknown"),
-        ("minute", "contract_blocked", "quantity_unit_unknown"),
-        ("depth5", "contract_blocked", "quantity_unit_unknown"),
         ("adj_factor", "unsupported", "no_independent_adjustment_factor_series"),
         ("full_minute", "unsupported", "no_safe_full_market_bulk_minute_contract"),
     ):
@@ -111,6 +110,7 @@ def market_capabilities() -> dict:
             market: {"status": status, "reason": reason, "quantity_unit": "unknown"}
             for market in ("CN", "HK", "US")
         }
+    result.update(quantity_capabilities())
     result["financial"] = {
         "CN": {"status": "empty", "reason": "representative_financial_response_empty", "sdk_available": True},
         "HK": {"status": "contract_blocked", "reason": "report_period_timestamp_unit_unverified", "sdk_available": True},

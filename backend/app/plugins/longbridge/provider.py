@@ -224,6 +224,11 @@ class LongbridgeProvider:
         except (ValueError, TypeError, AttributeError, KeyError):
             return {"status": "contract_blocked", "reason": "financial_response_shape_mismatch", "sdk_available": True}
 
+    def probe_quantity_contract(self, symbol: str, dataset: str) -> dict:
+        from app.plugins.longbridge.quantity import probe_quantity_contract
+
+        return probe_quantity_contract(self, symbol, dataset)
+
     @staticmethod
     def configured_symbols() -> list[str]:
         from app.services import preferences, watchlist
