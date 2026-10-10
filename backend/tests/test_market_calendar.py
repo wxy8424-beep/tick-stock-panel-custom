@@ -124,7 +124,7 @@ def test_signal_expiry_future_timestamp_and_out_of_order_cache():
     assert get_market_session("US", now).session_state == "closed"
     for clock in [now - timedelta(seconds=1), now + timedelta(seconds=121)]:
         assert get_market_session("US", clock).diagnostic_code == "provider_status_expired"
-        assert not get_market_session("US", clock).is_regular_session
+        assert get_market_session("US", clock).is_regular_session
 
 
 def test_security_halt_and_raw_integer_codes_cannot_become_market_signals():

@@ -55,7 +55,8 @@ def evaluate(market: str, observation: Observation, now: datetime,
     error = error if error in MESSAGES else None
     if not available or observation.get("context_failed"):
         status, code = "unavailable", "context_unavailable"
-    elif market_state not in {"regular", "closed", "pre_open", "break", "post_market", "holiday"}:
+    elif (metadata.get("diagnostic_code") == "calendar_provider_conflict"
+          or market_state not in {"regular", "closed", "pre_open", "break", "post_market", "holiday"}):
         status, code = "unknown", "market_state_unknown"
     elif received is None:
         status, code = ("unavailable", error) if error else ("no_data", "realtime_no_data")
@@ -78,6 +79,7 @@ def evaluate(market: str, observation: Observation, now: datetime,
         "half_day": metadata.get("half_day", False), "early_close": metadata.get("early_close"),
         "market_diagnostic_code": metadata.get("diagnostic_code"),
         "state_source": metadata.get("state_source"), "provider_market_status": metadata.get("runtime_status"),
+        "runtime_observed_at": metadata.get("runtime_observed_at"),
         "context_initialized": context_initialized, "subscription_state": "not_used_snapshot",
         # No public SDK socket/reconnect observer: unknown is deliberate.
         "connection_state": "unknown", "reconnect_state": "unobservable",

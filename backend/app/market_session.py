@@ -56,6 +56,24 @@ def clear_market_signals() -> None:
         _SIGNALS.clear()
 
 
+def remove_market_signals(source: str) -> None:
+    """Remove only this publisher's observations on unavailability/shutdown."""
+    with _SIGNAL_LOCK:
+        for market, signal in list(_SIGNALS.items()):
+            if signal.source == source:
+                del _SIGNALS[market]
+
+
+def replace_market_signals(source: str, signals: list[MarketRuntimeSignal]) -> None:
+    """Publish one provider response atomically, including missing-market removal."""
+    if any(signal.source != source for signal in signals):
+        raise ValueError("runtime signal source mismatch")
+    with _SIGNAL_LOCK:
+        remove_market_signals(source)
+        for signal in signals:
+            cache_market_signal(signal)
+
+
 def market_from_symbol(symbol: object) -> str | None:
     """复用实时入口的证券格式边界; 声明冲突仍由记录入口校验。"""
     if not isinstance(symbol, str) or "." not in symbol:
@@ -83,6 +101,7 @@ class MarketSession:
     state_source: str = "official_calendar"
     runtime_status: str = "unavailable"
     diagnostic_code: str | None = None
+    runtime_observed_at: datetime | None = None
 
     @property
     def local_date(self) -> date:
@@ -101,6 +120,7 @@ class MarketSession:
             "half_day": self.half_day, "early_close": self.early_close,
             "session_detail": self.session_detail, "state_source": self.state_source,
             "runtime_status": self.runtime_status, "diagnostic_code": self.diagnostic_code,
+            "runtime_observed_at": self.runtime_observed_at.isoformat() if self.runtime_observed_at else None,
         }
 
 
@@ -162,16 +182,19 @@ def get_market_session(market: str, now: datetime | None = None,
         raise ValueError("runtime signal market mismatch")
     age = now - runtime_signal.checked_at
     if age < timedelta(0) or age > timedelta(seconds=runtime_signal.ttl_seconds):
-        return replace(result, session_state="unknown", runtime_status="expired",
-                       diagnostic_code="provider_status_expired")
+        return replace(result, runtime_status="expired", diagnostic_code="provider_status_expired",
+                       runtime_observed_at=runtime_signal.checked_at)
     provider_state = runtime_signal.state
     conflict = provider_state != state and provider_state != "unknown"
+    if provider_state == "closed" and state == "holiday":
+        return replace(result, runtime_status="verified", runtime_observed_at=runtime_signal.checked_at)
     # Explicit temporary closure wins. An opening signal cannot undo an official
     # holiday or validate an uncovered date; conflicting active states fail closed.
-    chosen = provider_state if provider_state in {"closed", "holiday", "unknown"} else state
-    if conflict and provider_state not in {"closed", "holiday"}:
+    chosen = provider_state if provider_state in {"closed", "holiday", "break", "unknown"} else state
+    if conflict and provider_state not in {"closed", "holiday", "break"}:
         chosen = "unknown"
     return replace(result, session_state=chosen, state_source=runtime_signal.source,
+                   runtime_observed_at=runtime_signal.checked_at,
                    runtime_status="verified" if provider_state != "unknown" else "unknown",
                    diagnostic_code="calendar_provider_conflict" if conflict else
                    "provider_status_unknown" if provider_state == "unknown" else result.diagnostic_code)

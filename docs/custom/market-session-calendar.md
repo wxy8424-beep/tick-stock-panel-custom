@@ -58,6 +58,10 @@ NYSE American/Arca/National/Texas late session；不能推广为所有券商/场
 
 ## 临时状态、优先级与冲突
 
+后续 runtime 接入已在 [Longbridge runtime market state](longbridge-runtime-market-state.md)
+核验官方 5.2.0 市场码并实现。以下为本日历阶段历史规则；信号过期/不可用
+现已回退 calendar，未知新鲜码仍 unknown，冲突不 healthy，以新文档为准。
+
 `MarketRuntimeSignal` 只接收已核验语义的市场级状态、aware checked_at、来源标识
 和 TTL（默认120秒）。缓存只内存保存，不网络取数；拒绝证券 scope、原始数字码、
 证券停牌状态和跨市场输入；较旧更新不能覆盖较新缓存。

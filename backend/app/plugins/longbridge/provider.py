@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from app.market_session import market_from_symbol
+from app.market_session import market_from_symbol, remove_market_signals, replace_market_signals
+from app.plugins.longbridge.market_state import REFRESH_SECONDS, SOURCE, parse_market_status
 from app.plugins.longbridge.realtime_health import ERROR_CODES, Observation, evaluate, utc_now
 
 logger = logging.getLogger(__name__)
@@ -153,9 +154,13 @@ class LongbridgeProvider:
         self._health_snapshots: dict[tuple[str, str], dict] = {}
         self._clock = clock
         self._realtime_observations: dict[str, Observation] = {}
+        self._market_checked_at: datetime | None = None
+        self._market_state_diagnostic = "not_checked"
 
     def close(self) -> None:
         with self._lock:
+            remove_market_signals(SOURCE)
+            self._market_checked_at = None
             # SDK 5.2.0 无公开 close; 最后一个 Python 引用释放 Rust context。
             self._context = None
             self._dashboard_contexts.clear()
@@ -176,7 +181,30 @@ class LongbridgeProvider:
                     market, self._realtime_observations.get(market, {}), now,
                     self._context is not None, available,
                 )
+                snapshots[("realtime", market)]["market_signal_diagnostic"] = self._market_state_diagnostic
         return build_health(self.market_capabilities, self.config.datasets, snapshots, available)
+
+    def _refresh_market_state(self) -> None:
+        """Caller holds SDK lock. No network on health/resolver reads; throttle polls.
+
+        Failure removes only our observations and falls back to the calendar.
+        Never infer market closure from security status or missing quotes.
+        """
+        now = self._clock()
+        if self._market_checked_at is not None:
+            age = (now - self._market_checked_at).total_seconds()
+            if 0 <= age < REFRESH_SECONDS:
+                return
+        self._market_checked_at = now
+        try:
+            response = self._get_dashboard_context("market").market_status()
+            signals = parse_market_status(response, self._clock())
+        except Exception:
+            remove_market_signals(SOURCE)
+            self._market_state_diagnostic = "market_signal_unavailable"
+            return
+        replace_market_signals(SOURCE, signals)
+        self._market_state_diagnostic = "market_signal_observed" if signals else "market_signal_empty"
 
     def _record_realtime(self, wanted, rows, received, errors, *, context_failed=False):
         """Aggregate all batches before recording market health; partial success wins.
@@ -242,10 +270,10 @@ class LongbridgeProvider:
             if not all(credentials):
                 raise ValueError("missing credential configuration")
             sdk = _sdk()
+            context_type = sdk.MarketContext if kind == "market" else sdk.FundamentalContext
             config = sdk.Config.from_apikey(
                 *credentials, enable_print_quote_packages=False, enable_overnight=False,
             )
-            context_type = sdk.MarketContext if kind == "market" else sdk.FundamentalContext
             self._dashboard_contexts[kind] = context_type(config)
         return self._dashboard_contexts[kind]
 
@@ -332,6 +360,7 @@ class LongbridgeProvider:
 
         with self._lock:
             self.last_errors = []
+            self._refresh_market_state()
             try:
                 context = self._get_context()
             except Exception as error:

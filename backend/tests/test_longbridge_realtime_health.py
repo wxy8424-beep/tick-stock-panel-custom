@@ -53,11 +53,11 @@ def test_provider_health_uses_cached_market_signal_and_keeps_contract(runtime, m
         cache_market_signal(MarketRuntimeSignal("US", "closed", now[0], "verified_provider"))
         result = entry(provider)
         assert result["status"] == "supported"
-        assert result["runtime"]["diagnostic_code"] == "market_closed"
+        assert result["runtime"]["diagnostic_code"] == "market_state_unknown"
         assert result["runtime"]["market_diagnostic_code"] == "calendar_provider_conflict"
         assert result["runtime"]["calendar_coverage"]["calendar_year"] == 2026
         now[0] += timedelta(seconds=121)
-        assert entry(provider)["runtime"]["runtime_status"] == "unknown"
+        assert entry(provider)["runtime"]["runtime_status"] == "stale"
         assert not entry(provider)["usable"]
     finally:
         clear_market_signals()
