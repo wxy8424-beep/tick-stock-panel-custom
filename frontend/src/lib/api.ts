@@ -4,6 +4,7 @@
 // Prod:同源(FastAPI 托管前端 dist)
 
 import { toast } from '@/components/Toast'
+import type { CalendarCoverage, MarketSessionInfo } from '@/lib/marketSession'
 
 const BASE = ''
 
@@ -40,7 +41,7 @@ export interface HKSection {
 export const HK_SECTION_KEYS = ['daily_stocks', 'daily_etfs', 'capital_flow', 'morning_accumulation', 'closing_accumulation', 'industry_flow', 'concept_flow', 'fundamentals', 'dividends', 'movers', 'block_trades', 'move_reasons'] as const
 export type HKSectionKey = typeof HK_SECTION_KEYS[number]
 export type HKDashboardResponse = Record<HKSectionKey, HKSection> & {
-  market: { code: 'HK'; timezone: string; local_time: string; session_state: string; calendar_status: string }
+  market: MarketSessionInfo & { code: 'HK'; timezone: string; local_time: string }
   updated_at: string
   focus_symbol: string | null
 }
@@ -54,7 +55,7 @@ export interface USStats {
   amount_total: number | null; amount_count: number
 }
 export type USDashboardResponse = Record<USSectionKey, USSection> & {
-  market: { code: 'US'; timezone: string; local_time: string; session_state: string; calendar_status: string }
+  market: MarketSessionInfo & { code: 'US'; timezone: string; local_time: string }
   updated_at: string; focus_symbol: string | null; focus_quote: MarketSnapshotRow | null
   sample: {
     coverage: string; requested: number; received: number; scope?: 'provider_universe'
@@ -538,6 +539,7 @@ export interface OverviewDimensionRankItem {
 export interface OverviewMarket {
   as_of: string | null
   quote_status: {
+    market?: MarketSessionInfo & { code: 'CN'; timezone: string; local_time: string }
     enabled?: boolean
     running?: boolean
     quote_age_ms?: number | null
@@ -1970,6 +1972,12 @@ export interface ProviderHealthCapability extends MarketCapability {
     reconnect_state?: 'unobservable'
     market_state?: string
     calendar_status?: string
+    calendar_coverage?: CalendarCoverage | null
+    half_day?: boolean
+    early_close?: string | null
+    market_diagnostic_code?: string | null
+    state_source?: string | null
+    provider_market_status?: string | null
     last_error_code?: string | null
     freshness_threshold_seconds?: number
   }

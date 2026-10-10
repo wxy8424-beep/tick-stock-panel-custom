@@ -42,17 +42,20 @@ def evaluate(market: str, observation: Observation, now: datetime,
     """One evaluation clock; raw errors and credentials cannot enter this view."""
     received = observation.get("received_at")
     event = observation.get("event_at")
+    metadata = {}
     try:
         session = get_market_session(market, now)
         market_state = session.session_state
         calendar_status = session.calendar_status
+        if hasattr(session, "public_metadata"):
+            metadata = session.public_metadata()
     except (ValueError, KeyError, OSError):
         market_state, calendar_status = "unknown", "unknown"
     error = observation.get("error_code")
     error = error if error in MESSAGES else None
     if not available or observation.get("context_failed"):
         status, code = "unavailable", "context_unavailable"
-    elif market_state not in {"regular", "closed", "pre_open", "break"}:
+    elif market_state not in {"regular", "closed", "pre_open", "break", "post_market", "holiday"}:
         status, code = "unknown", "market_state_unknown"
     elif received is None:
         status, code = ("unavailable", error) if error else ("no_data", "realtime_no_data")
@@ -71,6 +74,10 @@ def evaluate(market: str, observation: Observation, now: datetime,
         "symbol": None, "last_received_at": received.isoformat() if received else None,
         "last_event_at": event.isoformat() if event else None, "evaluated_at": now.isoformat(),
         "market_state": market_state, "calendar_status": calendar_status,
+        "calendar_coverage": metadata.get("calendar_coverage"),
+        "half_day": metadata.get("half_day", False), "early_close": metadata.get("early_close"),
+        "market_diagnostic_code": metadata.get("diagnostic_code"),
+        "state_source": metadata.get("state_source"), "provider_market_status": metadata.get("runtime_status"),
         "context_initialized": context_initialized, "subscription_state": "not_used_snapshot",
         # No public SDK socket/reconnect observer: unknown is deliberate.
         "connection_state": "unknown", "reconnect_state": "unobservable",

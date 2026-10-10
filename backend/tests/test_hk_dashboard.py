@@ -62,7 +62,7 @@ def test_mapping_and_partial_failure_are_secret_safe():
     assert "fake-access-token" not in str(result)
     assert result["industry_flow"]["mode"] == "UNAVAILABLE"
     assert result["daily_etfs"]["status"] == "unavailable"
-    assert result["market"]["calendar_status"] == "unknown"
+    assert result["market"]["calendar_status"] == "covered"
     assert not any("trade" in method for _, method, _, _ in provider.calls)
 
 

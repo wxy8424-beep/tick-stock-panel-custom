@@ -185,11 +185,13 @@ def test_quote_service_holiday_gate_blocks_polling(monkeypatch):
 
 def test_quote_service_polls_when_trading_or_unknown(monkeypatch):
     from app.services.quote_service import QuoteService
+    monkeypatch.setattr("app.services.quote_service.cn_now", lambda: datetime(
+        2026, 8, 26, 10, 30, tzinfo=CN))
 
     qs = QuoteService()
     monkeypatch.setattr(trading_day, "is_trading_day", lambda now=None: True)
     assert qs._should_poll_for_phase("morning") is True
-    # 未知 → 维持现状 (周几近似)
+    # 探针未知但官方日历已确认正常交易日 → 保留现有轮询。
     monkeypatch.setattr(trading_day, "is_trading_day", lambda now=None: None)
     assert qs._should_poll_for_phase("morning") is True
 

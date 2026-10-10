@@ -51,6 +51,15 @@ it('keeps CN 13 slot types with spacious US metrics, Chinese labels and independ
   expect(JSON.parse(localStorage.getItem(US_LAYOUT_KEY)!).items).toEqual(comfortable)
   expect(localStorage.getItem('cn-layout-sentinel')).toBe('untouched')
 })
+it('uses backend post-market state and keeps the existing snapshot-only contract', async () => {
+  const data = response()
+  data.market = { ...data.market, session_state: 'post_market', calendar_status: 'covered' }
+  mock.get.mockResolvedValue(data)
+  await render()
+  expect(host.textContent).toContain('盘后')
+  expect(host.textContent).toContain('未启用盘前/盘后行情')
+  expect(host.textContent).not.toContain('交易中（时钟窗口）')
+})
 
 it('expands saved short KPI cards without overlaps or repeatedly shifting the saved layout', () => {
   const expanded = normalizeUSLayout({ v: 1, items: DEFAULT_LAYOUT })

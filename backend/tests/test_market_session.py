@@ -18,9 +18,9 @@ from app.services.quote_service import QuoteService
     ("HK", "09:29", "pre_open"), ("HK", "09:30", "regular"),
     ("HK", "12:00", "regular"), ("HK", "12:01", "break"),
     ("HK", "13:00", "regular"), ("HK", "16:00", "regular"),
-    ("HK", "16:01", "closed"),
+    ("HK", "16:01", "post_market"),
     ("US", "09:29", "pre_open"), ("US", "09:30", "regular"),
-    ("US", "16:00", "regular"), ("US", "16:01", "closed"),
+    ("US", "16:00", "regular"), ("US", "16:01", "post_market"),
 ])
 def test_clock_boundaries(market, clock, state):
     zones = {"CN": "Asia/Shanghai", "HK": "Asia/Hong_Kong", "US": "America/New_York"}
@@ -31,7 +31,7 @@ def test_clock_boundaries(market, clock, state):
     assert result.local_datetime == local and result.local_date == local.date()
     assert result.session_state == state
     assert result.is_regular_session is (state == "regular")
-    assert result.calendar_status == "unknown" and result.confirmed_trading_day is None
+    assert result.calendar_status == "covered" and result.confirmed_trading_day is True
     if market == "CN":
         assert result.is_regular_session == in_continuous_session(local)
 
@@ -42,7 +42,7 @@ def test_weekend_is_closed_without_claiming_calendar_confirmation(market):
     local = datetime(2026, 8, 29, 10, tzinfo=zone)
     result = get_market_session(market, local)
     assert result.session_state == "closed" and not result.is_regular_session
-    assert result.calendar_status == "unknown"
+    assert result.calendar_status == "covered" and result.confirmed_trading_day is False
 
 
 @pytest.mark.parametrize(("day", "utc_hour", "offset"), [(15, 14, -5), (15, 13, -4)])
@@ -123,8 +123,8 @@ def test_service_cn_final_and_holiday_guard_unchanged(monkeypatch):
 
 @pytest.mark.parametrize(("market", "hour", "minute", "state"), [
     ("CN", 11, 30, "break"), ("CN", 15, 0, "closed"),
-    ("HK", 12, 0, "break"), ("HK", 16, 0, "closed"),
-    ("US", 16, 0, "closed"),
+    ("HK", 12, 0, "break"), ("HK", 16, 0, "post_market"),
+    ("US", 16, 0, "post_market"),
 ])
 def test_session_end_does_not_include_following_seconds(market, hour, minute, state):
     zone = get_market_session(market).timezone

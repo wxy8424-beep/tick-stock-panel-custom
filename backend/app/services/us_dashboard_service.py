@@ -210,9 +210,7 @@ class USDashboardService:
     def _get(self, symbol, snapshots):
         now = self.clock()
         session = get_market_session("US", now)
-        result = {"market": {"code": "US", "timezone": "America/New_York",
-                             "local_time": session.local_datetime.isoformat(),
-                             "session_state": session.session_state, "calendar_status": session.calendar_status},
+        result = {"market": session.public_metadata(),
                   "updated_at": now.isoformat(), "focus_symbol": symbol, "focus_quote": None,
                   "sample": {"coverage": "六只代表股票及当前异动/已获取标的 · 最多40只 · 非全美股市场", "requested": 0, "received": 0}}
         result.update({

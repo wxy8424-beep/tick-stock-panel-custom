@@ -21,9 +21,8 @@ from app.services.depth_service import DepthService
 
 def _cn_now_at(hour: int, minute: int, weekday: int = 0):
     """构造一个北京时间固定时刻的 cn_now 替身。weekday: 0=周一 ... 6=周日。"""
-    # 2024-01-01 是周一, 据此定位目标 weekday 的日期
-    day = 1 + ((weekday - datetime(2024, 1, 1).weekday()) % 7)
-    fixed = datetime(2024, 1, day, hour, minute, tzinfo=CN_TZ)
+    # 官方日历覆盖内无假日的一周: 2026-08-24 是周一。
+    fixed = datetime(2026, 8, 24 + weekday, hour, minute, tzinfo=CN_TZ)
 
     def _fn():
         return fixed
@@ -129,3 +128,9 @@ def test_window_matches_quote_service():
                     assert DepthService._is_continuous_trading() == QuoteService._is_continuous_trading(), (
                         f"窗口不一致 @ weekday={weekday} {hour:02d}:{minute:02d}"
                     )
+
+
+def test_depth_calendar_holiday_and_expiry_fail_closed():
+    for fixed in [datetime(2026, 10, 1, 10, tzinfo=CN_TZ), datetime(2027, 1, 4, 10, tzinfo=CN_TZ)]:
+        with patch.object(depth_service, "cn_now", lambda value=fixed: value):
+            assert not DepthService._is_continuous_trading()

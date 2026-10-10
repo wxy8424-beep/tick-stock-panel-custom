@@ -4,6 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.market_session import (
+    MarketRuntimeSignal,
+    cache_market_signal,
+    clear_market_signals,
+    get_market_session,
+)
 from app.plugins.longbridge import provider as lb
 from app.plugins.longbridge import realtime_health as health
 
@@ -35,6 +41,26 @@ def runtime(monkeypatch):
 
 def entry(provider, market="US"):
     return provider.provider_health()["realtime"][market]
+
+
+def test_provider_health_uses_cached_market_signal_and_keeps_contract(runtime, monkeypatch):
+    provider, now, *_ = runtime
+    monkeypatch.setattr(health, "get_market_session", get_market_session)
+    provider.get_realtime(["AAPL.US"])
+    assert entry(provider)["runtime"]["calendar_status"] == "covered"
+    assert entry(provider)["runtime"]["market_state"] == "regular"
+    try:
+        cache_market_signal(MarketRuntimeSignal("US", "closed", now[0], "verified_provider"))
+        result = entry(provider)
+        assert result["status"] == "supported"
+        assert result["runtime"]["diagnostic_code"] == "market_closed"
+        assert result["runtime"]["market_diagnostic_code"] == "calendar_provider_conflict"
+        assert result["runtime"]["calendar_coverage"]["calendar_year"] == 2026
+        now[0] += timedelta(seconds=121)
+        assert entry(provider)["runtime"]["runtime_status"] == "unknown"
+        assert not entry(provider)["usable"]
+    finally:
+        clear_market_signals()
 
 
 def test_first_and_repeated_receipts_keep_event_time_distinct(runtime):

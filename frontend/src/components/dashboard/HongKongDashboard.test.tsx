@@ -42,6 +42,15 @@ it('shows all 12 sections, honest unavailable states, and isolates a section err
   expect(host.textContent).toContain('500')
   expect(host.textContent).toContain('非全港股')
 })
+it('displays backend half-day without recomputing the calendar in the browser', async () => {
+  const data = response()
+  data.market = { ...data.market, session_state: 'regular', calendar_status: 'covered', half_day: true, early_close: '12:00' }
+  mock.get.mockResolvedValue(data)
+  await render()
+  expect(host.textContent).toContain('交易中 · 半日市 12:00提早收盘')
+  expect(host.textContent).toContain('临时休市状态未核验')
+  expect(host.textContent).not.toContain('假日日历未确认')
+})
 it('renders all Chinese modes and localizes reasons/industry using official stock-table names', async () => {
   const data = response()
   data.daily_stocks.data = [{ symbol: '1200.HK', name: '美联集团', last_price: 2 }]

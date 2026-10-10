@@ -4,6 +4,7 @@ import { api, type HKRow, type HKSection, type HKSectionKey } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { MarketSwitcherBar, type Market } from '@/components/MarketSwitcher'
 import { cn } from '@/lib/cn'
+import { calendarLabel, marketSessionLabel } from '@/lib/marketSession'
 import { HK_MODE_LABELS, hkError, hkIndustry, hkReason, hkStockName } from './hkLabels'
 
 const sections: { key: HKSectionKey; title: string; span: string; hint?: string }[] = [
@@ -91,15 +92,14 @@ export function HongKongDashboard({ onMarketChange }: { onMarketChange: (market:
       {row.timestamp && <p className="mt-1 text-[10px] text-muted">{time(row.timestamp)} · {row.labels?.map(label => hkIndustry(label)).join(' / ')}</p>}
     </div>)}</div>
   }
-  const state = data?.market.session_state
-  const label = state ? ({ regular: '常规时段', pre_open: '盘前', break: '午休', closed: '时段外' }[state] || state) : '状态待获取'
+  const label = marketSessionLabel(data?.market)
   return <div className="min-h-full min-w-0 bg-base p-3">
     <header className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-card border border-border bg-surface px-3 py-2">
       <h1 className="text-lg font-semibold text-foreground">港股市场</h1>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-secondary"><span className="text-accent">{label}</span><span>香港本地时间 {time(data?.market.local_time)}</span><span>Longbridge</span><span>最后更新 {time(data?.updated_at)}</span><span>焦点股票 {effectiveFocus || '—'}</span><button type="button" onClick={() => query.refetch()} disabled={query.isFetching} className="rounded-btn border border-border px-2 py-1 disabled:opacity-50">刷新</button></div>
     </header>
     <MarketSwitcherBar value="HK" enabledMarkets={['CN', 'HK', 'US']} onChange={onMarketChange} className="mb-3 rounded-card border px-3" />
-    <p className="mb-3 text-[10px] text-muted">市场状态由后端香港时钟提供；假日日历未确认。行情可能为最近交易日快照，请查看数据时间。</p>
+    <p className="mb-3 text-[10px] text-muted">{calendarLabel(data?.market)}。行情可能为最近交易日快照，请查看数据时间。</p>
     <div className="grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-12">{sections.map(({ key, ...item }) => <Card key={key} {...item} section={data?.[key]} loading={query.isLoading} requestError={query.isError}>{content(key)}</Card>)}</div>
   </div>
 }

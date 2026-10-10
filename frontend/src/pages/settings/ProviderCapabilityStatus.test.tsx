@@ -4,6 +4,19 @@ import { expect, it } from 'vitest'
 import { ProviderCapabilityStatus } from './ProviderCapabilityStatus'
 import type { MarketCapability, ProviderHealthCapability } from '@/lib/api'
 
+it('renders backend holiday health without claiming delayed or active data', () => {
+  const html = renderToStaticMarkup(<ProviderCapabilityStatus markets={{ US: {
+    status: 'supported', usable: true, runtime: {
+      availability: 'available', runtime_status: 'healthy', diagnostic_code: 'market_closed',
+      message: '非正常交易时段,不要求新快照', last_checked: null, symbol: null,
+      market_state: 'holiday', calendar_status: 'covered',
+    },
+  } }} serving available />)
+  expect(html).toContain('节假日休市')
+  expect(html).toContain('不要求新快照')
+  expect(html).not.toContain('数据延迟')
+})
+
 function text(status: MarketCapability['status'], reason?: string, message?: string) {
   return renderToStaticMarkup(<ProviderCapabilityStatus markets={{
     CN: { status, reason, message }, HK: { status, reason, message }, US: { status, reason, message },

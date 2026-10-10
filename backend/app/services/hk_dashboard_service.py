@@ -115,9 +115,7 @@ class HKDashboardService:
     def _get(self, symbol, snapshots):
         now = self.clock()
         session = get_market_session("HK", now)
-        result = {"market": {"code": "HK", "timezone": "Asia/Hong_Kong",
-                             "local_time": session.local_datetime.isoformat(),
-                             "session_state": session.session_state, "calendar_status": session.calendar_status},
+        result = {"market": session.public_metadata(),
                   "updated_at": now.isoformat(), "focus_symbol": symbol}
         result.update({
             "industry_flow": unavailable("暂无可靠行业资金流数据源;行业排行不等于资金流"),

@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowUpRight, Check, Database, Gauge, GripVertical, Info, Loader2, Play, RefreshCw, RotateCcw, Sparkles, Timer } from 'lucide-react'
 import { DatePicker } from '@/components/DatePicker'
 import { api, type AlertEvent } from '@/lib/api'
+import { calendarLabel, marketSessionLabel } from '@/lib/marketSession'
 import { QK } from '@/lib/queryKeys'
 import { DimensionMembersDialog, type DimensionMembersTarget } from '@/components/DimensionMembersDialog'
 import { useDataStatus, useCapabilities, useSettings, usePreferences } from '@/lib/useSharedQueries'
@@ -320,6 +321,7 @@ function ChinaDashboard({ onMarketChange }: { onMarketChange: (market: Market) =
       </div>
 
       <MarketSwitcherBar value="CN" enabledMarkets={['CN', 'HK', 'US']} onChange={onMarketChange} className="mb-1.5 rounded-card border px-3" />
+      {data.quote_status?.market && <p className="mb-1.5 text-[10px] text-muted">{marketSessionLabel(data.quote_status.market)} · {calendarLabel(data.quote_status.market)}</p>}
 
       {/* 自选实时模式提示: 大盘看板为盘后数据, 仅自选股实时。避免用户误读为全市场实时。 */}
       {quoteMode === 'watchlist' && (

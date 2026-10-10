@@ -589,6 +589,7 @@ class QuoteService:
         final_done = bool(final_key and final_key in self._final_sync_done)
         final_failed = self._final_sync_failed.get(final_key) if final_key else None
         return {
+            "market": self.get_market_session("CN", cn_now()).public_metadata(),
             "enabled": self._enabled,
             "running": self._running,
             "paused": self._paused,
@@ -1295,17 +1296,20 @@ class QuoteService:
     def _holiday_gate(self) -> bool:
         """交易日探针门控: 确定休市 → False (停止轮询, 含 final 定版)。
 
-        探针未知 (None, 未配置 fuyao 且 tickflow 不可用/开盘缓冲窗内) → True,
-        维持周几近似现状行为。探针是纯读, 不落盘; 休市结论带 TTL 定期复探,
+        官方日历必须覆盖且确认交易日。探针未知时只保留已确认交易日的原行为。
+        探针是纯读, 不落盘; 休市结论带 TTL 定期复探,
         误判自愈。首次判定变化打一条日志, 避免每拍刷屏。
         """
         from app.services import trading_day
 
-        holiday = trading_day.is_trading_day() is False
+        session = self.get_market_session("CN", cn_now())
+        holiday = (session.confirmed_trading_day is not True or session.session_state in {"unknown", "holiday"}
+                   or (session.session_state == "closed" and session.diagnostic_code == "calendar_provider_conflict")
+                   or trading_day.is_trading_day() is False)
         if holiday != self._holiday_active:
             self._holiday_active = holiday
             if holiday:
-                logger.info("交易日探针判定休市, 行情轮询暂停 (30 分钟复探)")
+                logger.info("CN 日历/市场状态门控未放行, 行情轮询暂停")
         return not holiday
 
     def _should_poll_for_phase(self, phase: str) -> bool:
@@ -1325,7 +1329,7 @@ class QuoteService:
 
     @staticmethod
     def get_market_session(market: str, now: datetime | None = None) -> MarketSession:
-        """实时调度/快照消费可按市场查询时钟; calendar unknown 不等于确认开市。"""
+        """统一计划时段/日历/市场级信号, 不改变 CN final 专属边界。"""
         return get_market_session(market, now)
 
     def _should_poll_for_market(self, market: str, *, cn_phase: str | None = None) -> bool:
@@ -1347,17 +1351,8 @@ class QuoteService:
 
     @staticmethod
     def _is_continuous_trading() -> bool:
-        """A股连续竞价时段(北京时间): 9:30-11:30 / 13:00-15:00, 仅工作日。
-
-        比 _is_trading_hours 严格: 排除 9:15-9:30 集合竞价(指示价, 非成交价)、
-        午间与 15:00 后收盘缓冲。监控评估只在此窗口进行, 不对竞价/收盘后的陈旧价告警。
-        (节假日由 _evaluate_monitors 里的「快照日期=当日」新鲜度判据兜底, 无需交易日历。)
-        """
-        now = cn_now()
-        t = now.time()
-        morning = dt_time(9, 30) <= t <= dt_time(11, 30)
-        afternoon = dt_time(13, 0) <= t <= dt_time(15, 0)
-        return now.weekday() < 5 and (morning or afternoon)
+        """统一 resolver 的 CN 活跃时段; 排除假日、未知、午休及定版缓冲。"""
+        return get_market_session("CN", cn_now()).is_regular_session
 
     @staticmethod
     def _save_enabled(enabled: bool) -> None:

@@ -65,7 +65,7 @@ def test_thirteen_slots_true_sample_and_us_isolation():
     assert result["focus_quote"]["currency"] == "USD"
     assert len(result["monitor"]["data"]) == 1
     assert result["market"]["session_state"] == "regular"
-    assert result["market"]["calendar_status"] == "unknown"
+    assert result["market"]["calendar_status"] == "covered"
     for key in ("radar", "trend", "concept-rank", "industry-rank"):
         assert result[key]["mode"] == "UNAVAILABLE"
     assert result["ladder"]["data"] == {"symbol": "AAPL.US", "call_volume": 200,

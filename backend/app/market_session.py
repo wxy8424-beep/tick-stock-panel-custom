@@ -1,13 +1,16 @@
-"""实时行情的市场时钟, 不提供交易日历或 CN final 状态。
+"""Unified cash-equity session resolver: official offline calendar + scoped signals.
 
-regular 表示工作日时钟窗口, 不是交易日确认。HK/US 尚无权威假日日历;
-CN 的实际轮询继续由 QuoteService 原有交易日探针门控。
+No SDK/network calls. Calendar states describe scheduled sessions, not individual
+security availability; CN final processing remains a separate ingestion contract.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from dataclasses import dataclass, replace
+from datetime import UTC, date, datetime, time, timedelta
+from threading import RLock
 from zoneinfo import ZoneInfo
+
+from app.market_calendar import CALENDARS
 
 _ZONES = {"CN": "Asia/Shanghai", "HK": "Asia/Hong_Kong", "US": "America/New_York"}
 _WINDOWS = {
@@ -16,6 +19,41 @@ _WINDOWS = {
     "US": ((time(9, 30), time(16)),),
 }
 _SUFFIX_MARKETS = {"SH": "CN", "SZ": "CN", "BJ": "CN", "HK": "HK", "US": "US"}
+_STATES = {"pre_open", "regular", "break", "post_market", "closed", "holiday", "unknown"}
+_SIGNALS: dict[str, MarketRuntimeSignal] = {}
+_SIGNAL_LOCK = RLock()
+
+
+@dataclass(frozen=True)
+class MarketRuntimeSignal:
+    """Only verified market-level semantics; never raw SDK codes/security halts."""
+
+    market: str
+    state: str
+    checked_at: datetime
+    source: str
+    scope: str = "market"
+    ttl_seconds: int = 120
+
+    def __post_init__(self):
+        if (self.market not in _ZONES or self.state not in _STATES
+                or self.scope != "market" or not self.source or self.ttl_seconds <= 0):
+            raise ValueError("invalid market-level runtime signal")
+        if self.checked_at.tzinfo is None or self.checked_at.utcoffset() is None:
+            raise ValueError("checked_at must include timezone")
+
+
+def cache_market_signal(signal: MarketRuntimeSignal) -> None:
+    """Feed only an independently verified status mapping, never quote absence."""
+    with _SIGNAL_LOCK:
+        previous = _SIGNALS.get(signal.market)
+        if previous is None or signal.checked_at >= previous.checked_at:
+            _SIGNALS[signal.market] = signal
+
+
+def clear_market_signals() -> None:
+    with _SIGNAL_LOCK:
+        _SIGNALS.clear()
 
 
 def market_from_symbol(symbol: object) -> str | None:
@@ -37,9 +75,14 @@ class MarketSession:
     timezone: ZoneInfo
     local_datetime: datetime
     session_state: str
-    # clock 模型不调用探针, 不把工作日误称为确认交易日。
     calendar_status: str = "unknown"
     confirmed_trading_day: bool | None = None
+    half_day: bool = False
+    early_close: str | None = None
+    session_detail: str | None = None
+    state_source: str = "official_calendar"
+    runtime_status: str = "unavailable"
+    diagnostic_code: str | None = None
 
     @property
     def local_date(self) -> date:
@@ -49,8 +92,20 @@ class MarketSession:
     def is_regular_session(self) -> bool:
         return self.session_state == "regular"
 
+    def public_metadata(self) -> dict:
+        return {
+            "code": self.market, "timezone": self.timezone.key,
+            "local_time": self.local_datetime.isoformat(), "session_state": self.session_state,
+            "calendar_status": self.calendar_status, "confirmed_trading_day": self.confirmed_trading_day,
+            "calendar_coverage": CALENDARS[self.market].metadata(),
+            "half_day": self.half_day, "early_close": self.early_close,
+            "session_detail": self.session_detail, "state_source": self.state_source,
+            "runtime_status": self.runtime_status, "diagnostic_code": self.diagnostic_code,
+        }
 
-def get_market_session(market: str, now: datetime | None = None) -> MarketSession:
+
+def get_market_session(market: str, now: datetime | None = None,
+                       *, runtime_signal: MarketRuntimeSignal | None = None) -> MarketSession:
     """按一个绝对时刻计算市场时钟。拒绝 naive 时间, 不依赖机器本地时区。
 
     端点包含语义与原 CN continuous session 一致; CN final 的专属半开窗口
@@ -63,14 +118,60 @@ def get_market_session(market: str, now: datetime | None = None) -> MarketSessio
         raise ValueError("now must include timezone")
     zone = ZoneInfo(_ZONES[market])
     local = now.astimezone(zone)
-    clock = local.time()
-    windows = _WINDOWS[market]
+    clock, day = local.time(), local.date()
+    calendar = CALENDARS[market]
+    covered = calendar.coverage_start <= day <= calendar.coverage_end
+    half_day = covered and day in calendar.half_days
+    end = calendar.early_close if half_day else _WINDOWS[market][-1][1]
+    windows = (_WINDOWS[market][0],) if market == "HK" and half_day else _WINDOWS[market]
+    if market == "US" and half_day:
+        windows = ((time(9, 30), end),)
     state = "closed"
-    if local.weekday() < 5:
+    detail = None
+    trading_day = None if not covered else day.weekday() < 5 and day not in calendar.holidays
+    if not covered:
+        state = "unknown"
+    elif day in calendar.holidays:
+        state = "holiday"
+    elif trading_day:
         if any(start <= clock <= end for start, end in windows):
             state = "regular"
-        elif clock < windows[0][0]:
+        elif (time(4) if market == "US" else time(0)) <= clock < windows[0][0]:
             state = "pre_open"
         elif windows[0][1] < clock < windows[-1][0]:
             state = "break"
-    return MarketSession(market, zone, local, state)
+        elif market == "US" and end < clock < (time(17) if half_day else time(20)):
+            state = "post_market"
+        elif market == "HK" and end < clock < time(end.hour, 10):
+            state, detail = "post_market", "closing_auction_window"
+        # Announced Nasdaq overnight launch remains outside this day-session contract.
+        # Do not label a potentially active overnight venue "closed" after launch date.
+    if covered and market == "US" and day >= date(2026, 12, 6) and (clock < time(4) or clock >= time(21)):
+        state, detail = "unknown", "overnight_session_unverified"
+    result = MarketSession(
+        market, zone, local, state, "covered" if covered else "out_of_coverage", trading_day,
+        half_day, end.isoformat(timespec="minutes") if half_day else None, detail,
+        diagnostic_code=None if covered else "calendar_out_of_coverage",
+    )
+    if runtime_signal is None:
+        with _SIGNAL_LOCK:
+            runtime_signal = _SIGNALS.get(market)
+    if runtime_signal is None:
+        return result
+    if runtime_signal.market != market:
+        raise ValueError("runtime signal market mismatch")
+    age = now - runtime_signal.checked_at
+    if age < timedelta(0) or age > timedelta(seconds=runtime_signal.ttl_seconds):
+        return replace(result, session_state="unknown", runtime_status="expired",
+                       diagnostic_code="provider_status_expired")
+    provider_state = runtime_signal.state
+    conflict = provider_state != state and provider_state != "unknown"
+    # Explicit temporary closure wins. An opening signal cannot undo an official
+    # holiday or validate an uncovered date; conflicting active states fail closed.
+    chosen = provider_state if provider_state in {"closed", "holiday", "unknown"} else state
+    if conflict and provider_state not in {"closed", "holiday"}:
+        chosen = "unknown"
+    return replace(result, session_state=chosen, state_source=runtime_signal.source,
+                   runtime_status="verified" if provider_state != "unknown" else "unknown",
+                   diagnostic_code="calendar_provider_conflict" if conflict else
+                   "provider_status_unknown" if provider_state == "unknown" else result.diagnostic_code)
