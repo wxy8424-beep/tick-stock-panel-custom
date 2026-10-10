@@ -333,3 +333,25 @@ uv run --extra dev python -m ruff check app/plugins/<your_plugin>/ tests/test_<y
 
 注册后, 插件和用户 YAML 自定义源走**完全相同的路由路径**(services 层的
 `provider_has_dataset` / `get_provider` 调用), 无需额外集成代码。
+
+## 可选多市场能力与数量单位契约
+
+Provider 可通过 `market_capabilities` 提供 `dataset -> CN/HK/US -> {status, reason}`。
+状态为 `supported`、`unsupported`、`contract_blocked`、`empty`、`unavailable`
+或 `entitlement_denied`。它是现有 registry 的可选元数据，不代替 `config.datasets`。
+`provider_has_dataset(name, dataset, market=None)` 和能力矩阵复用同一判断：
+显式市场必须 supported 且已声明 dataset；仅部分市场 supported 而未传 market 时拒绝路由。
+没有元数据的旧 Provider 保持原有声明和行为。设置页仅展示后端状态，不据 SDK 方法存在推断可用。
+
+数量单位可显式声明为 `legacy_100_shares`、`shares`、`board_lots`、`contracts`、`unknown`。
+现有 CN 数量消费要求 `legacy_100_shares`：显式未知值拒绝并报告 `quantity_unit_unknown`，
+其他不兼容值报告 `quantity_unit_incompatible`。旧源未声明单位时保持既有数值，不进行隐式转换。
+日K与分钟标准化保留已提供的 `market/timezone/currency/volume_unit/quantity_unit`；
+未提供时不新增列。此扩展不意味着现有 CN 时区、写盘与业务算法已支持港美市场。
+
+Longbridge 当前只有 realtime 正式启用。daily/minute/depth5 因单位未知而阻塞，
+adj_factor 无独立因子序列，full_minute 无安全全市场批量契约。
+财务候选 adapter 仅映射已确认的 IS/BS/CF 金额和 BPS，字符串直接解析 Decimal；
+不映射未确认 EPS 口径，不缩放 yoy/ratio，不用报告期冒充公告日期。
+HK 的 `fp_end` 虽有报告期语义，单位未确认，required `period_end` 保持 null，候选不用于正式写盘。
+CN 代表标的响应为空；US SDK 接口存在，但当前凭证/市场上下文不可用。这些诊断状态并非永久市场能力承诺。

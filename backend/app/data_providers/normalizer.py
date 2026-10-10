@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import polars as pl
 
+from app.data_providers.contracts import METADATA_COLUMNS, validate_quantity_units
 from app.indicators.pipeline import filter_halt_days
 
 DAILY_COLS = ["symbol", "date", "open", "high", "low", "close", "volume", "amount", "quote_ts"]
@@ -35,6 +36,7 @@ def normalize_daily(data, default_symbol: str | None = None, source: str = "tick
     df = to_polars(data)
     if df.is_empty():
         return df
+    validate_quantity_units(df)
     rename_map = {
         "ts_code": "symbol",
         "trade_date": "date",
@@ -55,7 +57,7 @@ def normalize_daily(data, default_symbol: str | None = None, source: str = "tick
         if col in df.columns:
             df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
     df = filter_halt_days(df)
-    keep = [c for c in DAILY_COLS if c in df.columns]
+    keep = [c for c in [*DAILY_COLS, *METADATA_COLUMNS] if c in df.columns]
     return df.select(keep) if keep else pl.DataFrame()
 
 

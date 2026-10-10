@@ -99,6 +99,10 @@ def _normalize_daily(df_in, default_symbol: str | None = None) -> pl.DataFrame:
     else:
         df = df_in
 
+    from app.data_providers.contracts import METADATA_COLUMNS, validate_quantity_units
+
+    validate_quantity_units(df)
+
     # 兼容字段名差异
     rename_map = {
         "ts_code": "symbol",
@@ -127,7 +131,7 @@ def _normalize_daily(df_in, default_symbol: str | None = None) -> pl.DataFrame:
     df = filter_halt_days(df)
 
     # 只保留 canonical 列
-    keep = [c for c in CANONICAL_DAILY_COLS if c in df.columns]
+    keep = [c for c in [*CANONICAL_DAILY_COLS, *METADATA_COLUMNS] if c in df.columns]
     return df.select(keep)
 
 
@@ -329,6 +333,9 @@ def sync_and_persist_daily_batch(
 
                 def _tracking_chunks(chunks):
                     for df in chunks:
+                        from app.data_providers.contracts import validate_quantity_units
+
+                        validate_quantity_units(df)
                         if not df.is_empty() and "symbol" in df.columns:
                             seen.update(df["symbol"].cast(pl.Utf8).unique().to_list())
                         yield df
@@ -350,6 +357,9 @@ def sync_and_persist_daily_batch(
             )
             if df.is_empty():
                 return _finalize(0)
+            from app.data_providers.contracts import validate_quantity_units
+
+            validate_quantity_units(df)
             if "symbol" in df.columns:
                 seen.update(df["symbol"].cast(pl.Utf8).unique().to_list())
             repo.append_daily(df)
@@ -801,6 +811,10 @@ def _normalize_minute(df_in, default_symbol: str | None = None) -> pl.DataFrame:
     else:
         df = df_in
 
+    from app.data_providers.contracts import METADATA_COLUMNS, validate_quantity_units
+
+    validate_quantity_units(df)
+
     rename_map = {
         "ts_code": "symbol",
         "vol": "volume",
@@ -849,7 +863,7 @@ def _normalize_minute(df_in, default_symbol: str | None = None) -> pl.DataFrame:
         if col in df.columns:
             df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
 
-    keep = [c for c in CANONICAL_MINUTE_COLS if c in df.columns]
+    keep = [c for c in [*CANONICAL_MINUTE_COLS, *METADATA_COLUMNS] if c in df.columns]
     return df.select(keep)
 
 
@@ -1019,6 +1033,9 @@ def _try_custom_minute(
         return (None, True)
     try:
         # 时区契约守卫: 插件/自定义源帧同样收口为北京墙钟 (CONTRIBUTING §3.3)
+        from app.data_providers.contracts import validate_quantity_units
+
+        validate_quantity_units(df)
         df = _enforce_minute_beijing_wallclock(df, source=provider_name)
     except Exception as e:
         logger.warning("custom minute provider %s datetime 契约校验失败, falling back to TickFlow: %s",

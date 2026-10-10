@@ -44,6 +44,7 @@ import { CAP_LABELS, TIER_RANK, tierRank, tierStyle, TierTag } from '@/lib/capab
 import { toast } from '@/components/Toast'
 import { DataSourceEditor } from './DataSourceEditor'
 import { LongbridgeCredentials } from './LongbridgeCredentials'
+import { ProviderCapabilityStatus } from './ProviderCapabilityStatus'
 import { TickFlowKeySection, TierHelpPopover, useInvalidateTierRelated } from './Keys'
 
 const DATASET_LABEL: Record<string, string> = {
@@ -1076,7 +1077,9 @@ function PluginDetail({ plugin, isActive, matrixCaps, servingSet }: {
                     <span className="text-xs text-foreground">{cap.label}</span>
                     <span className="ml-1.5 text-[10px] text-muted/60">{cap.desc}</span>
                   </div>
-                  {serving ? (
+                  {plugin.market_capabilities?.[cap.id] ? (
+                    <ProviderCapabilityStatus markets={plugin.market_capabilities[cap.id]} serving={serving} available={plugin.available} />
+                  ) : serving ? (
                     <span className="w-[56px] text-right text-[10px] text-bear inline-flex items-center justify-end gap-0.5 shrink-0">
                       <Check className="h-2.5 w-2.5" />服务中
                     </span>

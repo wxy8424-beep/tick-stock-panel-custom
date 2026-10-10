@@ -120,6 +120,7 @@ def _declared_sources() -> list[dict]:
             "available": bool(plugin.get("available")),
             "status": str(plugin.get("status") or ""),
             "kind": "plugin",
+            "market_capabilities": plugin.get("market_capabilities"),
         })
     for source in custom_sources.list_sources():
         rows.append({
@@ -143,7 +144,7 @@ def _display_of(sources: list[dict], name: str) -> str:
     return name
 
 
-def build_capability_matrix(current: dict[str, str], tickflow_tier: str = "none") -> dict:
+def build_capability_matrix(current: dict[str, str], tickflow_tier: str = "none", market: str | None = None) -> dict:
     """注册表 + 源能力声明 + 当前偏好 → 能力路由矩阵。
 
     current 为 {偏好字段: 当前值}, 由 API 层经 preferences getters 注入;
@@ -179,7 +180,21 @@ def build_capability_matrix(current: dict[str, str], tickflow_tier: str = "none"
                 "status": s["status"],
                 "note": None if s["available"] else (s["status"] or "不可用"),
             }
-            (candidates if s["available"] else pending).append(entry)
+            usable_source = s["available"]
+            if s.get("market_capabilities") is not None:
+                from types import SimpleNamespace
+
+                from app.data_providers.contracts import dataset_status
+
+                provider = SimpleNamespace(
+                    config=SimpleNamespace(datasets=s["datasets"]),
+                    market_capabilities=s["market_capabilities"],
+                )
+                status = dataset_status(provider, cap["id"], market)
+                usable_source = usable_source and status["status"] == "supported"
+                if not usable_source:
+                    entry.update(available=False, status=status["status"], note=status.get("reason"))
+            (candidates if usable_source else pending).append(entry)
         usable = any(c["name"] == effective for c in candidates)
         capabilities.append({
             "id": cap["id"],

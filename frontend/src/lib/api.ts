@@ -1925,6 +1925,7 @@ export interface DataSourceItem {
 
 /** 内置可选插件数据源 (plugins/ 目录, 需手动装依赖) */
 export interface PluginDataSourceItem {
+  market_capabilities?: Record<string, Partial<Record<'CN' | 'HK' | 'US', MarketCapability>>>
   name: string
   display_name: string
   datasets: string[]
@@ -1936,6 +1937,13 @@ export interface PluginDataSourceItem {
   homepage?: string        // 插件官网/申请地址 (manifest 可选声明)
   api_key_env?: string     // 声明后设置页提供 Key 输入框 (先探后存)
   api_key_masked?: string  // 当前生效 Key 的脱敏串 (secrets.json 优先, .env 兜底; 与 TickFlow Key 同一展示契约)
+}
+
+export interface MarketCapability {
+  status: 'supported' | 'unsupported' | 'contract_blocked' | 'entitlement_denied' | 'unavailable' | 'empty'
+  reason?: string | null
+  quantity_unit?: string
+  sdk_available?: boolean
 }
 
 export interface LongbridgeCredentialStatus {

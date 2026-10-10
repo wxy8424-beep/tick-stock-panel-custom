@@ -88,7 +88,14 @@ def list_sources() -> list[dict]:
 
 def list_plugins() -> list[dict]:
     """返回所有内置插件的状态 (含已装/未装), 供设置页独立分类显示。"""
-    return list(_PLUGIN_STATUS.values())
+    result = []
+    for name, status in _PLUGIN_STATUS.items():
+        item = dict(status)
+        metadata = getattr(_PROVIDERS.get(name), "market_capabilities", None)
+        if metadata is not None:
+            item["market_capabilities"] = metadata
+        result.append(item)
+    return result
 
 
 def _plugin_key_masked(name: str, api_key_env: str) -> str:
@@ -317,7 +324,7 @@ def is_custom_provider(name: str) -> bool:
     return (name or "").lower() in _PROVIDERS
 
 
-def provider_has_dataset(name: str, dataset: str) -> bool:
+def provider_has_dataset(name: str, dataset: str, market: str | None = None) -> bool:
     """判断某个 custom 源是否配置了指定数据集。
 
     用于主流程分流: 总开关选了 custom, 但某个数据集未启用时, 该数据集回退 TickFlow。
@@ -325,7 +332,9 @@ def provider_has_dataset(name: str, dataset: str) -> bool:
     provider = _PROVIDERS.get((name or "").lower())
     if provider is None:
         return False
-    return dataset in provider.config.datasets
+    from app.data_providers.contracts import dataset_status
+
+    return dataset_status(provider, dataset, market)["status"] == "supported"
 
 
 def get_config_dict(name: str) -> dict | None:

@@ -358,6 +358,9 @@ class GenericHTTPProvider:
         """把映射后的 df 规范成 minute canonical 列。"""
         if df.is_empty():
             return df
+        from app.data_providers.contracts import METADATA_COLUMNS, validate_quantity_units
+
+        validate_quantity_units(df)
         if "datetime" in df.columns and df.schema["datetime"] != pl.Datetime("us"):
             if df.schema["datetime"] == pl.Utf8:
                 # 字符串 datetime 直接 cast 会整体置 null (polars 不做字符串解析);
@@ -370,6 +373,7 @@ class GenericHTTPProvider:
             if col in df.columns:
                 df = df.with_columns(pl.col(col).cast(pl.Float64, strict=False))
         keep = [c for c in ("symbol", "datetime", "open", "high", "low", "close", "volume", "amount") if c in df.columns]
+        keep.extend(c for c in METADATA_COLUMNS if c in df.columns)
         return df.select(keep) if keep else pl.DataFrame()
 
     _DATETIME_STR_FORMATS = (

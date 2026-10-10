@@ -135,6 +135,12 @@ class LongbridgeProvider:
     realtime_snapshot_scope = "symbols"
     cn_volume_supported = False
 
+    @property
+    def market_capabilities(self) -> dict:
+        from app.plugins.longbridge.financial import market_capabilities
+
+        return market_capabilities()
+
     def __init__(self):
         self.config = _Config()
         self._lock = threading.Lock()

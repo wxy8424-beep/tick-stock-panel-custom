@@ -336,7 +336,15 @@ class DepthService:
             try:
                 data = fetch_depth(chunk)
                 if isinstance(data, dict):
-                    result.update(data)
+                    from app.data_providers.contracts import validate_quantity_units
+
+                    for symbol, record in data.items():
+                        try:
+                            validate_quantity_units(record)
+                        except ValueError as error:
+                            logger.warning("depth quantity contract rejected %s: %s", symbol, error)
+                            continue
+                        result[symbol] = record
                 else:
                     logger.warning(
                         "depth provider %s 第 %d 批返回非 dict, 已跳过",
