@@ -1,4 +1,5 @@
 """Confirmed FinancialReports fields only; report timestamp units remain unverified."""
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 FIELDS = {
@@ -33,7 +34,7 @@ def financial_candidates(symbol: str, response) -> list[dict]:
     fp_end is upstream report-period-end timestamp, not announcement date.
     No seconds/milliseconds contract is established, so required period_end stays null.
     """
-    reports = response.get("list", {}) if isinstance(response, dict) else getattr(response, "list", {})
+    reports = response.get("list") if isinstance(response, dict) else getattr(response, "list", None)
     if not isinstance(reports, dict):
         raise ValueError("financial_response_shape_mismatch")
     rows = {}
@@ -50,13 +51,50 @@ def financial_candidates(symbol: str, response) -> list[dict]:
                         "symbol": symbol, "statement": kind, "currency": currency,
                         "fiscal_year": value.get("year"), "source_period": value.get("period"),
                         "source_fp_end": value.get("fp_end"), "period_end": None, "announce_date": None,
+                        **dict.fromkeys(mapping.values()),
                     })
                     row[target] = decimal_value(value.get("value"))
     return list(rows.values())
 
 
 def financial_rows_ready(rows: list[dict]) -> bool:
-    return bool(rows) and all(row.get("symbol") and row.get("period_end") is not None for row in rows)
+    if not rows:
+        return False
+    for row in rows:
+        if not row.get("symbol") or not isinstance(row.get("period_end"), str):
+            return False
+        try:
+            date.fromisoformat(row["period_end"])
+        except ValueError:
+            return False
+    return True
+
+
+def assess_financial_contract(symbol: str, response) -> dict:
+    """Only a safe summary. Candidates remain disconnected from persistence/routing.
+
+    Existing project history requires symbol + ISO period_end; announcement date,
+    EPS and indicator values are nullable. Source timestamp unit is not established.
+    """
+    rows = financial_candidates(symbol, response)
+    reports = response.get("list") if isinstance(response, dict) else response.list
+    if not reports:
+        return {"status": "empty", "reason": "representative_financial_response_empty", "sdk_available": True}
+    fields = sorted({
+        name for row in rows for mapping in FIELDS.values() for name in mapping.values()
+        if row.get(name) is not None
+    })
+    return {
+        "status": "contract_blocked",
+        "reason": "report_period_timestamp_unit_unverified" if rows else "financial_fields_unmapped",
+        "sdk_available": True,
+        "required_fields": ["symbol", "period_end"],
+        "unresolved_required_fields": ["period_end"],
+        "currencies": sorted({row["currency"] for row in rows if row.get("currency")}),
+        "available_statements": sorted({row["statement"] for row in rows}),
+        "mapped_fields": fields,
+        "missing_optional_fields": ["announce_date", "basic_eps", "diluted_eps", "yoy", "ratio"],
+    }
 
 
 def market_capabilities() -> dict:

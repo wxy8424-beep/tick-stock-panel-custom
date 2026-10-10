@@ -177,7 +177,7 @@ class LongbridgeProvider:
         allowed = {
             "quote": {"quote", "static_info", "capital_flow", "option_volume"},
             "market": {"top_movers"},
-            "fundamental": {"dividend_detail"},
+            "fundamental": {"dividend_detail", "financial_report"},
         }
         if method not in allowed.get(kind, set()):
             raise ValueError("unsupported read-only dashboard method")
@@ -197,6 +197,32 @@ class LongbridgeProvider:
                     self._dashboard_contexts[kind] = context_type(config)
                 context = self._dashboard_contexts[kind]
             return getattr(context, method)(*args, **kwargs)
+
+    def probe_financial_contract(self, symbol: str) -> dict:
+        """Read-only financial report contract check, not an enabled financial dataset.
+
+        Returns fixed classifications and field names only, never raw SDK errors/data.
+        Does not update capability declarations or write candidates to any repository.
+        """
+        from app.plugins.longbridge.financial import assess_financial_contract
+
+        market = market_from_symbol(symbol)
+        if market is None:
+            return {"status": "unsupported", "reason": "unknown_market"}
+        try:
+            response = self.dashboard_request("fundamental", "financial_report", symbol)
+        except ImportError:
+            return {"status": "unavailable", "reason": "sdk_missing", "sdk_available": False}
+        except Exception as error:
+            category = error_category(error)
+            reason = "financial_network_unavailable" if category == "network" else (
+                "requires_us_token_or_market_context" if market == "US" else "financial_request_unavailable"
+            )
+            return {"status": "unavailable", "reason": reason, "sdk_available": True}
+        try:
+            return assess_financial_contract(symbol, response)
+        except (ValueError, TypeError, AttributeError, KeyError):
+            return {"status": "contract_blocked", "reason": "financial_response_shape_mismatch", "sdk_available": True}
 
     @staticmethod
     def configured_symbols() -> list[str]:
