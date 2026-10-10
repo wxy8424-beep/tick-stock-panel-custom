@@ -76,9 +76,11 @@ def test_safe_summary_has_no_raw_value_or_fabricated_announcement():
 
 def test_provider_returns_fixed_period_type_blocker(monkeypatch):
     provider = LongbridgeProvider()
-    monkeypatch.setattr(provider, "dashboard_request", lambda *args: report({"unexpected": "shape"}))
+    monkeypatch.setattr(provider, "_get_dashboard_context", lambda kind: SimpleNamespace(financial_report=lambda symbol: report({"unexpected": "shape"})))
     result = provider.probe_financial_contract("700.HK")
-    assert result == {"status": "contract_blocked", "reason": "financial_period_end_type_invalid", "sdk_available": True}
+    assert result["status"] == "contract_blocked"
+    assert result["reason"] == "financial_period_end_type_invalid"
+    assert result["diagnostic"]["failure_stage"] == "adapter"
 
 
 @pytest.mark.parametrize("value", ["20260630", "2026-W27-2", "2026-06-30T00:00:00", "2026-02-30"])
@@ -94,6 +96,6 @@ def test_capability_scope_and_quantity_realtime_are_unchanged():
     assert all(row["status"] == "supported" for row in metadata["realtime"].values())
     assert metadata["financial"]["HK"]["reason"] == "report_period_timestamp_unit_unverified"
     assert metadata["financial"]["CN"]["status"] == "empty"
-    assert metadata["financial"]["US"]["status"] == "unavailable"
+    assert metadata["financial"]["US"]["status"] == "contract_blocked"
     assert metadata["financial"]["US"]["sdk_available"] is True
     assert set(provider.config.datasets) == {"realtime"}

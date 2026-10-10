@@ -12,7 +12,7 @@ def main() -> int:
             {"symbol": symbol, **provider.probe_financial_contract(symbol)}
             for symbol in ("600519.SH", "700.HK", "AAPL.US", "NVDA.US")
         ]
-        expected = ("empty", "contract_blocked", "unavailable", "unavailable")
+        expected = ("empty", "contract_blocked", "contract_blocked", "contract_blocked")
         passed = all(row["status"] == status and row.get("reason") != "financial_network_unavailable"
                      for row, status in zip(rows, expected, strict=True))
         hk = rows[1]

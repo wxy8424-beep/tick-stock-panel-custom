@@ -182,21 +182,22 @@ class LongbridgeProvider:
         if method not in allowed.get(kind, set()):
             raise ValueError("unsupported read-only dashboard method")
         with self._lock:
-            if kind == "quote":
-                context = self._get_context()
-            else:
-                if kind not in self._dashboard_contexts:
-                    credentials = _credentials()
-                    if not all(credentials):
-                        raise ValueError("missing credential configuration")
-                    sdk = _sdk()
-                    config = sdk.Config.from_apikey(
-                        *credentials, enable_print_quote_packages=False, enable_overnight=False,
-                    )
-                    context_type = sdk.MarketContext if kind == "market" else sdk.FundamentalContext
-                    self._dashboard_contexts[kind] = context_type(config)
-                context = self._dashboard_contexts[kind]
+            context = self._get_context() if kind == "quote" else self._get_dashboard_context(kind)
             return getattr(context, method)(*args, **kwargs)
+
+    def _get_dashboard_context(self, kind: str):
+        """Caller holds the existing SDK lock; keep one context per read-only kind."""
+        if kind not in self._dashboard_contexts:
+            credentials = _credentials()
+            if not all(credentials):
+                raise ValueError("missing credential configuration")
+            sdk = _sdk()
+            config = sdk.Config.from_apikey(
+                *credentials, enable_print_quote_packages=False, enable_overnight=False,
+            )
+            context_type = sdk.MarketContext if kind == "market" else sdk.FundamentalContext
+            self._dashboard_contexts[kind] = context_type(config)
+        return self._dashboard_contexts[kind]
 
     def probe_financial_contract(self, symbol: str) -> dict:
         """Read-only financial report contract check, not an enabled financial dataset.
@@ -204,28 +205,9 @@ class LongbridgeProvider:
         Returns fixed classifications and field names only, never raw SDK errors/data.
         Does not update capability declarations or write candidates to any repository.
         """
-        from app.plugins.longbridge.financial import assess_financial_contract
+        from app.plugins.longbridge.financial_availability import probe_financial
 
-        market = market_from_symbol(symbol)
-        if market is None:
-            return {"status": "unsupported", "reason": "unknown_market"}
-        try:
-            response = self.dashboard_request("fundamental", "financial_report", symbol)
-        except ImportError:
-            return {"status": "unavailable", "reason": "sdk_missing", "sdk_available": False}
-        except Exception as error:
-            category = error_category(error)
-            reason = "financial_network_unavailable" if category == "network" else (
-                "requires_us_token_or_market_context" if market == "US" else "financial_request_unavailable"
-            )
-            return {"status": "unavailable", "reason": reason, "sdk_available": True}
-        try:
-            return assess_financial_contract(symbol, response)
-        except ValueError as error:
-            reason = "financial_period_end_type_invalid" if error.args == ("financial_period_end_type_invalid",) else "financial_response_shape_mismatch"
-            return {"status": "contract_blocked", "reason": reason, "sdk_available": True}
-        except (TypeError, AttributeError, KeyError):
-            return {"status": "contract_blocked", "reason": "financial_response_shape_mismatch", "sdk_available": True}
+        return probe_financial(self, symbol)
 
     def probe_quantity_contract(self, symbol: str, dataset: str) -> dict:
         from app.plugins.longbridge.quantity import probe_quantity_contract

@@ -142,6 +142,6 @@ def test_settings_matrix_cannot_route_blocked_datasets(monkeypatch, market):
     assert dataset_status(provider, "realtime", market)["status"] == "supported"
     assert provider.market_capabilities["financial"]["HK"]["reason"] == "report_period_timestamp_unit_unverified"
     assert provider.market_capabilities["financial"]["CN"]["status"] == "empty"
-    assert provider.market_capabilities["financial"]["US"]["status"] == "unavailable"
+    assert provider.market_capabilities["financial"]["US"]["status"] == "contract_blocked"
     assert dataset_status(provider, "adj_factor", market)["status"] == "unsupported"
     assert dataset_status(provider, "full_minute", market)["status"] == "unsupported"

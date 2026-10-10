@@ -149,6 +149,6 @@ def market_capabilities() -> dict:
     result["financial"] = {
         "CN": {"status": "empty", "reason": "representative_financial_response_empty", "sdk_available": True},
         "HK": {"status": "contract_blocked", "reason": "report_period_timestamp_unit_unverified", "sdk_available": True},
-        "US": {"status": "unavailable", "reason": "requires_us_token_or_market_context", "sdk_available": True},
+        "US": {"status": "contract_blocked", "reason": "report_period_timestamp_unit_unverified", "sdk_available": True},
     }
     return result

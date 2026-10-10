@@ -1,6 +1,8 @@
 # Longbridge financial period-end evidence chain
 
 2026-10-10；基线 `9bae40b79bd5542a1b265a45e723a9985c6f8c92`；installed SDK 5.2.0。
+后续当前US availability已重新验证为上游可用、CONTRACT_BLOCKED；下文US不可用是本阶段历史快照。
+最新状态与失败分类见[US availability](longbridge-us-financial-availability.md)，不改变fp_end证据结论。
 范围仅 financial 的 fp_end → period_end，数量证据矩阵及九项数量 blocker 不改。
 
 ## 完整证据链

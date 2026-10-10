@@ -48,9 +48,9 @@ def test_capabilities_do_not_claim_unsafe_financial_support():
     metadata = provider.market_capabilities
     assert metadata["financial"]["CN"]["status"] == "empty"
     assert metadata["financial"]["HK"]["status"] == "contract_blocked"
-    assert metadata["financial"]["US"]["status"] == "unavailable"
+    assert metadata["financial"]["US"]["status"] == "contract_blocked"
     assert metadata["financial"]["US"]["sdk_available"] is True
-    assert metadata["financial"]["US"]["reason"] == "requires_us_token_or_market_context"
+    assert metadata["financial"]["US"]["reason"] == "report_period_timestamp_unit_unverified"
     assert set(provider.config.datasets) == {"realtime"}
     for dataset in ("daily", "minute", "depth5"):
         assert all(item["status"] == "contract_blocked" for item in metadata[dataset].values())
@@ -105,10 +105,10 @@ def test_invalid_financial_numbers_are_rejected(number):
 def test_probe_uses_only_fundamental_report_and_returns_safe_summary(monkeypatch):
     provider = LongbridgeProvider()
     calls = []
-    def request(kind, method, symbol):
-        calls.append((kind, method, symbol))
+    def request(symbol):
+        calls.append(("fundamental", "financial_report", symbol))
         return SimpleNamespace(list={})
-    monkeypatch.setattr(provider, "dashboard_request", request)
+    monkeypatch.setattr(provider, "_get_dashboard_context", lambda kind: SimpleNamespace(financial_report=request))
     result = provider.probe_financial_contract("600519.SH")
     assert result["status"] == "empty"
     assert calls == [("fundamental", "financial_report", "600519.SH")]
@@ -118,11 +118,11 @@ def test_probe_uses_only_fundamental_report_and_returns_safe_summary(monkeypatch
 def test_us_context_error_is_sanitized_not_sdk_unsupported(monkeypatch):
     provider = LongbridgeProvider()
     def request(*args):
-        raise RuntimeError("sample-secret-token rejected by context")
-    monkeypatch.setattr(provider, "dashboard_request", request)
+        raise RuntimeError("sample-secret-token credential rejected by context")
+    monkeypatch.setattr(provider, "_get_dashboard_context", request)
     result = provider.probe_financial_contract("AAPL.US")
     assert result["status"] == "unavailable"
-    assert result["reason"] == "requires_us_token_or_market_context"
+    assert result["reason"] == "financial_authentication_unavailable"
     assert result["sdk_available"] is True
     assert "sample-secret-token" not in str(result)
 
