@@ -94,6 +94,9 @@ def list_plugins() -> list[dict]:
         metadata = getattr(_PROVIDERS.get(name), "market_capabilities", None)
         if metadata is not None:
             item["market_capabilities"] = metadata
+        health = getattr(_PROVIDERS.get(name), "provider_health", None)
+        if callable(health):
+            item["provider_health"] = health(available=bool(item.get("available")))
         result.append(item)
     return result
 

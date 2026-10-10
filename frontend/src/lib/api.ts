@@ -1925,6 +1925,7 @@ export interface DataSourceItem {
 
 /** 内置可选插件数据源 (plugins/ 目录, 需手动装依赖) */
 export interface PluginDataSourceItem {
+  provider_health?: Record<string, Partial<Record<'CN' | 'HK' | 'US', ProviderHealthCapability>>>
   market_capabilities?: Record<string, Partial<Record<'CN' | 'HK' | 'US', MarketCapability>>>
   name: string
   display_name: string
@@ -1944,6 +1945,22 @@ export interface MarketCapability {
   reason?: string | null
   quantity_unit?: string
   sdk_available?: boolean
+}
+
+export interface ProviderHealthCapability extends MarketCapability {
+  provider: string
+  market: 'CN' | 'HK' | 'US'
+  capability: string
+  status_label: string
+  message: string
+  usable: boolean
+  runtime: {
+    availability: 'available' | 'empty' | 'unavailable' | 'not_checked'
+    diagnostic_code: string
+    message: string
+    last_checked: string | null
+    symbol: string | null
+  }
 }
 
 export interface LongbridgeCredentialStatus {

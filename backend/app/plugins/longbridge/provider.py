@@ -148,6 +148,8 @@ class LongbridgeProvider:
         self._dashboard_contexts: dict[str, object] = {}
         self._metadata: dict[str, dict] = {}
         self.last_errors: list[dict] = []
+        self._health_lock = threading.Lock()
+        self._health_snapshots: dict[tuple[str, str], dict] = {}
 
     def close(self) -> None:
         with self._lock:
@@ -155,6 +157,24 @@ class LongbridgeProvider:
             self._context = None
             self._dashboard_contexts.clear()
             self._metadata.clear()
+        with self._health_lock:
+            self._health_snapshots.clear()
+
+    def provider_health(self, available: bool = True) -> dict:
+        from app.plugins.longbridge.health import build_health
+
+        with self._health_lock:
+            snapshots = dict(self._health_snapshots)
+        return build_health(self.market_capabilities, self.config.datasets, snapshots, available)
+
+    def _remember_health(self, symbol: str, dataset: str, result: dict) -> None:
+        from app.plugins.longbridge.health import runtime_snapshot
+
+        market = market_from_symbol(symbol)
+        if market is not None:
+            snapshot = runtime_snapshot(symbol, result, dataset)
+            with self._health_lock:
+                self._health_snapshots[(dataset, market)] = snapshot
 
     def _get_context(self):
         if self._context is None:
@@ -207,12 +227,16 @@ class LongbridgeProvider:
         """
         from app.plugins.longbridge.financial_availability import probe_financial
 
-        return probe_financial(self, symbol)
+        result = probe_financial(self, symbol)
+        self._remember_health(symbol, "financial", result)
+        return result
 
     def probe_quantity_contract(self, symbol: str, dataset: str) -> dict:
         from app.plugins.longbridge.quantity import probe_quantity_contract
 
-        return probe_quantity_contract(self, symbol, dataset)
+        result = probe_quantity_contract(self, symbol, dataset)
+        self._remember_health(symbol, dataset, result)
+        return result
 
     @staticmethod
     def configured_symbols() -> list[str]:
