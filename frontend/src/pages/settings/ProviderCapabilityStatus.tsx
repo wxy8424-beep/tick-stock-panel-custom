@@ -28,6 +28,7 @@ export function ProviderCapabilityStatus({ markets, serving, available }: {
           {market} {state}{entry.message ? ` · ${entry.message}` : entry.reason ? ' · 能力契约尚未满足' : ''}
           {entry.runtime && <span className="block" title={entry.runtime.last_checked ?? undefined}>
             最近运行：{entry.runtime.message}{entry.runtime.symbol ? `（${entry.runtime.symbol}）` : ''}
+            {entry.runtime.last_received_at && <span className="block">最近收到：<time dateTime={entry.runtime.last_received_at}>{entry.runtime.last_received_at}</time></span>}
           </span>}
         </span>
       })}

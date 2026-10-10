@@ -2,7 +2,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, it } from 'vitest'
 import { ProviderCapabilityStatus } from './ProviderCapabilityStatus'
-import type { MarketCapability } from '@/lib/api'
+import type { MarketCapability, ProviderHealthCapability } from '@/lib/api'
 
 function text(status: MarketCapability['status'], reason?: string, message?: string) {
   return renderToStaticMarkup(<ProviderCapabilityStatus markets={{
@@ -78,4 +78,47 @@ it('renders supplied capability irrespective of provider or market identity', ()
   expect(text('supported')).toContain('服务中')
   expect(text('empty')).toContain('当前无数据')
   expect(text('unavailable')).toContain('当前不可用')
+})
+
+const runtimeCases = [
+  ['healthy', '正常'], ['stale', '数据延迟'], ['reconnecting', '重连中'],
+  ['no_data', '无最近数据'], ['unavailable', '当前不可用'], ['unknown', '市场状态未确认'],
+] as const
+for (const [status, message] of runtimeCases) {
+  it(`renders backend realtime runtime ${status} independently of supported contract`, () => {
+    const html = renderToStaticMarkup(<ProviderCapabilityStatus markets={{ US: {
+      status: 'supported', status_label: '可用', usable: status === 'healthy',
+      runtime: { availability: 'not_checked', runtime_status: status, diagnostic_code: `realtime_${status}`,
+        message, last_checked: null, symbol: null },
+    } }} serving available />)
+    expect(html).toContain(`最近运行：${message}`)
+    expect(html).not.toContain('契约阻塞')
+    if (status !== 'healthy') expect(html).not.toContain('服务中')
+  })
+}
+
+it('renders backend closed market and receipt time without computing stale', () => {
+  const runtime: ProviderHealthCapability['runtime'] = {
+    availability: 'available', runtime_status: 'healthy', diagnostic_code: 'market_closed',
+    message: '非正常交易时段,不要求新快照', last_checked: null, symbol: null,
+    market_state: 'closed', last_received_at: '2000-01-01T00:00:00+00:00',
+  }
+  const html = renderToStaticMarkup(<ProviderCapabilityStatus markets={{ US: {
+    status: 'supported', usable: true, runtime,
+  } }} serving available />)
+  expect(html).toContain('非正常交易时段')
+  expect(html).toContain('最近收到：')
+  expect(html).toContain('2000-01-01T00:00:00+00:00')
+  expect(html).not.toContain('数据延迟')
+})
+
+it('keeps blocker contract visible even with healthy runtime', () => {
+  const html = renderToStaticMarkup(<ProviderCapabilityStatus markets={{ US: {
+    status: 'contract_blocked', usable: false, runtime: {
+      availability: 'available', runtime_status: 'healthy', diagnostic_code: 'upstream_available',
+      message: '正常', last_checked: null, symbol: null,
+    },
+  } }} serving available />)
+  expect(html).toContain('契约阻塞')
+  expect(html).not.toContain('服务中')
 })

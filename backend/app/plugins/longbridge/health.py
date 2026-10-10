@@ -73,7 +73,7 @@ def build_health(metadata: dict, datasets, snapshots: dict, available: bool) -> 
                 "provider": "longbridge", "market": market, "capability": dataset,
                 "status": status, "status_label": LABELS[status], "reason": reason,
                 "message": MESSAGES.get(reason, "" if status == "supported" else "能力契约尚未满足"),
-                "usable": status == "supported" and dataset in datasets and available and runtime["availability"] not in {"unavailable", "empty"},
+                "usable": status == "supported" and dataset in datasets and available and runtime["availability"] not in {"unavailable", "empty"} and runtime.get("runtime_status", "healthy") == "healthy",
                 "runtime": runtime,
             }
     return result

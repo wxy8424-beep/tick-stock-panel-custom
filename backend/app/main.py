@@ -394,6 +394,11 @@ async def _application_lifespan(app: FastAPI):
         from app.services.quote_service import shutdown_webhook_executor
 
         shutdown_webhook_executor()
+        # Release the reused SDK context after all quote consumers have stopped.
+        from app.data_providers.custom import get_provider, is_custom_provider
+
+        if is_custom_provider("longbridge"):
+            get_provider("longbridge").close()
         logger.info("shutdown")
 
 

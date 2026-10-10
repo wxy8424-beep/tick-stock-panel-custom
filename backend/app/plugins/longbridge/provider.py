@@ -12,10 +12,11 @@ import math
 import os
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.market_session import market_from_symbol
+from app.plugins.longbridge.realtime_health import ERROR_CODES, Observation, evaluate, utc_now
 
 logger = logging.getLogger(__name__)
 _ENV_NAMES = ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")
@@ -141,7 +142,7 @@ class LongbridgeProvider:
 
         return market_capabilities()
 
-    def __init__(self):
+    def __init__(self, *, clock=utc_now):
         self.config = _Config()
         self._lock = threading.Lock()
         self._context = None
@@ -150,6 +151,8 @@ class LongbridgeProvider:
         self.last_errors: list[dict] = []
         self._health_lock = threading.Lock()
         self._health_snapshots: dict[tuple[str, str], dict] = {}
+        self._clock = clock
+        self._realtime_observations: dict[str, Observation] = {}
 
     def close(self) -> None:
         with self._lock:
@@ -157,15 +160,42 @@ class LongbridgeProvider:
             self._context = None
             self._dashboard_contexts.clear()
             self._metadata.clear()
-        with self._health_lock:
-            self._health_snapshots.clear()
+            with self._health_lock:
+                self._health_snapshots.clear()
+                self._realtime_observations.clear()
+            self.last_errors = []
 
     def provider_health(self, available: bool = True) -> dict:
         from app.plugins.longbridge.health import build_health
 
         with self._health_lock:
             snapshots = dict(self._health_snapshots)
+            now = self._clock()
+            for market in ("CN", "HK", "US"):
+                snapshots[("realtime", market)] = evaluate(
+                    market, self._realtime_observations.get(market, {}), now,
+                    self._context is not None, available,
+                )
         return build_health(self.market_capabilities, self.config.datasets, snapshots, available)
+
+    def _record_realtime(self, wanted, rows, received, errors, *, context_failed=False):
+        """Aggregate all batches before recording market health; partial success wins.
+
+        A later bad symbol cannot erase the last valid market receipt. Failures stay
+        diagnostic and stale is determined by age, not by one failed symbol.
+        """
+        checked = self._clock()
+        with self._health_lock:
+            for market in {market_from_symbol(s) for s in wanted}:
+                previous = self._realtime_observations.get(market, {}).copy()
+                valid = [row for row in rows.values() if row["market"] == market]
+                codes = errors.get(market, [])
+                previous.update(checked_at=checked, context_failed=context_failed,
+                                error_code=codes[-1] if codes else None)
+                if valid:
+                    previous["received_at"] = max(received[row["symbol"]] for row in valid)
+                    previous["event_at"] = datetime.fromtimestamp(max(row["timestamp"] for row in valid) / 1000, UTC)
+                self._realtime_observations[market] = previous
 
     def _remember_health(self, symbol: str, dataset: str, result: dict) -> None:
         from app.plugins.longbridge.health import runtime_snapshot
@@ -292,6 +322,14 @@ class LongbridgeProvider:
         if not wanted:
             return []
         rows: dict[str, dict] = {}
+        received: dict[str, datetime] = {}
+        errors: dict[str, list[str]] = {}
+
+        def remember_error(chunk, reason):
+            code = ERROR_CODES.get(reason, "realtime_sdk_error")
+            for market in {market_from_symbol(s) for s in chunk}:
+                errors.setdefault(market, []).append(code)
+
         with self._lock:
             self.last_errors = []
             try:
@@ -299,15 +337,26 @@ class LongbridgeProvider:
             except Exception as error:
                 self.last_errors.append({"stage": "context", "reason": error_category(error)})
                 logger.warning("Longbridge context unavailable: %s", self.last_errors[-1]["reason"])
+                remember_error(wanted, self.last_errors[-1]["reason"])
+                self._record_realtime(wanted, rows, received, errors, context_failed=True)
                 return []
             for offset in range(0, len(wanted), MAX_SYMBOLS):
                 chunk = wanted[offset:offset + MAX_SYMBOLS]
                 try:
                     quotes = context.quote(chunk)
+                    received_at = self._clock()
                 except Exception as error:
                     self.last_errors.append({"stage": "quote", "batch": offset // MAX_SYMBOLS,
                                              "reason": error_category(error)})
                     logger.warning("Longbridge quote batch failed: %s", self.last_errors[-1]["reason"])
+                    remember_error(chunk, self.last_errors[-1]["reason"])
+                    continue
+                if quotes is None:
+                    quotes = []
+                if not isinstance(quotes, (list, tuple)):
+                    remember_error(chunk, "invalid_response_fields")
+                    self.last_errors.append({"stage": "rows", "batch": offset // MAX_SYMBOLS,
+                                             "reason": "invalid_response_fields"})
                     continue
                 missing = [s for s in chunk if s not in self._metadata]
                 if missing:
@@ -325,17 +374,26 @@ class LongbridgeProvider:
                         logger.warning("Longbridge metadata unavailable: %s", self.last_errors[-1]["reason"])
                 rejected = 0
                 for quote in quotes or []:
+                    failed_symbol = None
                     try:
-                        if quote.symbol not in chunk:
+                        failed_symbol = quote.symbol
+                        if failed_symbol not in chunk:
                             raise ValueError("unexpected symbol")
                         row = self._normalize(quote)
                         rows[row["symbol"]] = row
-                    except (AttributeError, ValueError, TypeError, OverflowError, OSError):
+                        received[row["symbol"]] = received_at
+                    except Exception:
+                        # SDK field access/parser failures are isolated per row.
+                        # Unknown payloads stay in batch diagnostics, not other markets.
+                        failed_market = market_from_symbol(failed_symbol)
+                        if failed_symbol in chunk and failed_market is not None:
+                            errors.setdefault(failed_market, []).append("realtime_parse_error")
                         rejected += 1
                 if rejected:
                     self.last_errors.append({"stage": "rows", "batch": offset // MAX_SYMBOLS,
                                              "rejected": rejected, "reason": "invalid_response_fields"})
                     logger.debug("Longbridge quote batch rejected %d invalid rows", rejected)
+            self._record_realtime(wanted, rows, received, errors)
         return list(rows.values())
 
     def get_realtime_for_markets(self, markets: list[str]) -> list[dict]:

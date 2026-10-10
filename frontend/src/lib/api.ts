@@ -1960,6 +1960,18 @@ export interface ProviderHealthCapability extends MarketCapability {
     message: string
     last_checked: string | null
     symbol: string | null
+    runtime_status?: 'healthy' | 'stale' | 'no_data' | 'reconnecting' | 'unavailable' | 'unknown'
+    last_received_at?: string | null
+    last_event_at?: string | null
+    evaluated_at?: string
+    context_initialized?: boolean
+    subscription_state?: 'not_used_snapshot'
+    connection_state?: 'unknown'
+    reconnect_state?: 'unobservable'
+    market_state?: string
+    calendar_status?: string
+    last_error_code?: string | null
+    freshness_threshold_seconds?: number
   }
 }
 

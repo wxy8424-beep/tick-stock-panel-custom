@@ -11,7 +11,8 @@ def test_health_matrix_is_derived_from_authoritative_contract():
     matrix = provider.provider_health()
     for market in ("CN", "HK", "US"):
         assert matrix["realtime"][market]["status"] == "supported"
-        assert matrix["realtime"][market]["usable"]
+        assert not matrix["realtime"][market]["usable"]
+        assert matrix["realtime"][market]["runtime"]["runtime_status"] == "no_data"
         for dataset in ("daily", "minute", "depth5"):
             entry = matrix[dataset][market]
             assert entry["status"] == "contract_blocked" and not entry["usable"]
