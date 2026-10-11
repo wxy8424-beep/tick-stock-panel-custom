@@ -398,3 +398,90 @@ def scoring_warmups() -> dict[str, int]:
         for spec in _CATALOG
         if spec.kind == "virtual" and spec.warmup_bars > 1
     }
+
+
+@dataclass(frozen=True)
+class FactorParameter:
+    """Immutable request parameter metadata, not a calculation definition."""
+
+    name: str
+    type: str
+    default: None
+    description: str
+
+    def to_dict(self) -> dict:
+        from dataclasses import asdict
+
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class EngineFactorMetadata:
+    """Read-only factor-family description; independent of legacy column IDs."""
+
+    name: str
+    category: str
+    description: str
+    parameters: tuple[FactorParameter, ...]
+    supported_modes: tuple[str, ...]
+    version: int = 1
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "category": self.category,
+            "description": self.description,
+            "parameters": [parameter.to_dict() for parameter in self.parameters],
+            "supported_modes": list(self.supported_modes),
+            "version": self.version,
+        }
+
+
+# Descriptions live in the existing metadata authority. Computational defaults,
+# supported families and semantic modes remain owned by the unchanged Engine.
+_ENGINE_DESCRIPTIONS = (
+    ("ma", "趋势", "简单移动平均线"),
+    ("ema", "趋势", "指数移动平均线"),
+    ("macd", "趋势", "移动平均收敛发散指标, 输出 DIF、DEA 和柱值"),
+    ("rsi", "超买超卖", "相对强弱指标"),
+    ("roc", "动量", "价格变化率"),
+    ("atr", "波动率", "平均真实波幅"),
+    ("volatility", "波动率", "收益率年化波动率"),
+)
+
+
+def engine_factors() -> tuple[EngineFactorMetadata, ...]:
+    """Describe existing Engine requests without calculation or extension sync.
+
+    A None period delegates to FactorRequest's existing default. It is not an
+    unknown numeric default. No duplicated period whitelist is maintained here.
+    """
+    from typing import get_args
+
+    from app.factors.engine import DEFAULT_FACTORS, CalculationMode
+
+    descriptions = {name: (category, description)
+                    for name, category, description in _ENGINE_DESCRIPTIONS}
+    period = FactorParameter(
+        "period", "integer | null", None,
+        "null 使用 FactorRequest 的默认周期; 可用周期由 FactorRequest.definition 校验",
+    )
+    backend = FactorParameter(
+        "compatibility_backend", "string | null", None,
+        "research 使用 null; backtest_compat 必须显式选择 polars 或 matrix",
+    )
+    return tuple(
+        EngineFactorMetadata(
+            request.kind, *descriptions[request.kind],
+            (() if request.kind == "macd" else (period,)) + (backend,),
+            get_args(CalculationMode),
+        )
+        for request in DEFAULT_FACTORS
+    )
+
+
+def get_engine_factor(name: str) -> EngineFactorMetadata | None:
+    """Case-insensitive family lookup; unknown/non-string names return None."""
+    if not isinstance(name, str):
+        return None
+    return next((spec for spec in engine_factors() if spec.name == name.lower()), None)
