@@ -30,7 +30,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import date, datetime, time as dt_time
+from datetime import UTC, date, datetime
+from datetime import time as dt_time
 
 import polars as pl
 
@@ -240,6 +241,7 @@ class QuoteService:
         self._interval = self.DEFAULT_INTERVAL
         self._thread: threading.Thread | None = None
         self._repo = None          # 延迟注入, 避免循环导入
+        self._snapshot_writer = None
         # SSE 订阅者集合: 每个 /stream 连接一个 QuoteSubscriber, 事件广播到所有订阅者
         self._subscribers: set[QuoteSubscriber] = set()
         self._strategy_monitor = None            # 延迟注入
@@ -307,6 +309,10 @@ class QuoteService:
         if self._thread:
             self._thread.join(timeout=10)
             self._thread = None
+        writer = getattr(self, "_snapshot_writer", None)
+        if writer is not None:
+            writer.close()
+            self._snapshot_writer = None
         # 此处不持久化关闭: lifespan shutdown (容器停止/重启) 也调用 stop,
         # 持久化 False 会让每次重启后实时行情都变关闭、需手动再开。
         # 持久化语义归 disable() (用户主动关闭)。
@@ -394,6 +400,23 @@ class QuoteService:
     def set_repo(self, repo) -> None:
         """注入 KlineRepository, 用于实时落盘。"""
         self._repo = repo
+
+    def _archive_records(self, records: list[dict], provider: str) -> None:
+        """Best-effort independent history before CN/non-CN routing or filtering."""
+        from app.services.snapshot_archive import SnapshotWriter
+
+        if not records:
+            return
+        data_dir = getattr(getattr(getattr(self, "_repo", None), "store", None), "data_dir", None)
+        if data_dir is None:
+            return
+        received_at = datetime.now(UTC)
+        try:
+            if getattr(self, "_snapshot_writer", None) is None:
+                self._snapshot_writer = SnapshotWriter(data_dir)
+            self._snapshot_writer.submit(records, received_at, provider)
+        except Exception:
+            logger.warning("快照归档失败, 行情链路保持运行")
 
     def set_app_state(self, app_state) -> None:
         """注入 FastAPI app.state, 用于获取 strategy_monitor 等单例。"""
@@ -694,6 +717,7 @@ class QuoteService:
         try:
             with self._fetch_lock:
                 records = fetch(markets)
+                self._archive_records(records, name)
                 self._update_non_cn_quotes(self._partition_realtime_records(records))
         except Exception:
             # SDK 异常可能携带认证请求内容, 不输出原文。
@@ -752,6 +776,7 @@ class QuoteService:
                     now_ts = time.perf_counter()
                     provider = custom_sources.get_provider(provider_name)
                     records = provider.get_realtime()
+                    self._archive_records(records, provider_name)
                     scoped = getattr(provider, "realtime_snapshot_scope", None) == "symbols"
                     if scoped:
                         # 按码批次不能覆盖 CN 全市场分区或确认全市场 final。
@@ -780,6 +805,7 @@ class QuoteService:
                             if fetched_indices is None:
                                 replace_index_cache = False
                             else:
+                                self._archive_records(fetched_indices, provider_name)
                                 records = records + fetched_indices
                         except Exception as e:  # noqa: BLE001
                             logger.warning("自定义源指数行情拉取失败: %s", e)
@@ -885,6 +911,7 @@ class QuoteService:
                 **{key: q[key] for key in ("market", "region", "exchange") if key in q},
             })
 
+        self._archive_records(records, "tickflow")
         return self._process_full_market_records(
             records, t0=t0, now_ts=now_ts, final_boundary_ms=final_boundary_ms
         )

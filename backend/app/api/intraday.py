@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from typing import Literal
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 router = APIRouter(prefix="/api/intraday", tags=["quotes"])
@@ -133,6 +134,44 @@ def quote_snapshots(
                 wanted = set(symbol_list)
                 rows = [row for row in rows if row["symbol"] in wanted]
         rows.extend(qs.get_non_cn_quotes(symbol_list))
+    return {"rows": rows, "count": len(rows)}
+
+
+def _read_snapshot_archive(request: Request, **filters) -> list[dict]:
+    from app.services.snapshot_archive import SnapshotArchive
+
+    repo = getattr(request.app.state, "repo", None)
+    data_dir = getattr(getattr(repo, "store", None), "data_dir", None)
+    if data_dir is None:
+        return []
+    try:
+        return SnapshotArchive(data_dir).query(**filters)
+    except Exception:
+        raise HTTPException(503, "快照归档暂不可读") from None
+
+
+@router.get("/snapshots/recent")
+def archived_snapshots(
+    request: Request,
+    symbol: str | None = Query(None, max_length=128),
+    market: Literal["CN", "HK", "US"] | None = None,
+    limit: int = Query(100, ge=1, le=1000),
+):
+    """最近收到的逐证券快照; 只读 SQLite, 不请求 Provider。"""
+    rows = _read_snapshot_archive(request, symbol=symbol, market=market, limit=limit, latest=True)
+    return {"rows": rows, "count": len(rows)}
+
+
+@router.get("/snapshots/quality")
+def archived_quality(
+    request: Request,
+    symbol: str | None = Query(None, max_length=128),
+    market: Literal["CN", "HK", "US"] | None = None,
+    limit: int = Query(100, ge=1, le=1000),
+    before_id: int | None = Query(None, ge=1),
+):
+    """逐条历史质量记录, 按入库ID倒序分页; 含原快照与两个时钟。"""
+    rows = _read_snapshot_archive(request, symbol=symbol, market=market, limit=limit, before_id=before_id)
     return {"rows": rows, "count": len(rows)}
 
 
