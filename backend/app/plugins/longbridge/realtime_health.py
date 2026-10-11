@@ -2,6 +2,7 @@
 from datetime import UTC, datetime
 from typing import TypedDict
 
+from app.data_providers.quote_quality import quality_view
 from app.market_session import get_market_session
 
 # Several normal 30s polling cycles; reception health, not exchange tick latency.
@@ -35,6 +36,7 @@ class Observation(TypedDict, total=False):
     checked_at: datetime
     error_code: str | None
     context_failed: bool
+    quality: dict
 
 
 def evaluate(market: str, observation: Observation, now: datetime,
@@ -84,6 +86,7 @@ def evaluate(market: str, observation: Observation, now: datetime,
         # No public SDK socket/reconnect observer: unknown is deliberate.
         "connection_state": "unknown", "reconnect_state": "unobservable",
         "last_error_code": error, "freshness_threshold_seconds": FRESHNESS_SECONDS,
+        "quality": quality_view(observation.get("quality"), available and not observation.get("context_failed", False)),
     }
 
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from app.data_providers.quote_quality import aggregate_quality, validate_quote
 from app.market_session import market_from_symbol, remove_market_signals, replace_market_signals
 from app.plugins.longbridge.market_state import REFRESH_SECONDS, SOURCE, parse_market_status
 from app.plugins.longbridge.realtime_health import ERROR_CODES, Observation, evaluate, utc_now
@@ -206,7 +207,7 @@ class LongbridgeProvider:
         replace_market_signals(SOURCE, signals)
         self._market_state_diagnostic = "market_signal_observed" if signals else "market_signal_empty"
 
-    def _record_realtime(self, wanted, rows, received, errors, *, context_failed=False):
+    def _record_realtime(self, wanted, rows, received, errors, *, context_failed=False, qualities=None):
         """Aggregate all batches before recording market health; partial success wins.
 
         A later bad symbol cannot erase the last valid market receipt. Failures stay
@@ -220,6 +221,7 @@ class LongbridgeProvider:
                 codes = errors.get(market, [])
                 previous.update(checked_at=checked, context_failed=context_failed,
                                 error_code=codes[-1] if codes else None)
+                previous["quality"] = aggregate_quality((qualities or {}).get(market, []), checked)
                 if valid:
                     previous["received_at"] = max(received[row["symbol"]] for row in valid)
                     previous["event_at"] = datetime.fromtimestamp(max(row["timestamp"] for row in valid) / 1000, UTC)
@@ -352,6 +354,7 @@ class LongbridgeProvider:
         rows: dict[str, dict] = {}
         received: dict[str, datetime] = {}
         errors: dict[str, list[str]] = {}
+        qualities: dict[str, list[dict]] = {}
 
         def remember_error(chunk, reason):
             code = ERROR_CODES.get(reason, "realtime_sdk_error")
@@ -409,6 +412,14 @@ class LongbridgeProvider:
                         if failed_symbol not in chunk:
                             raise ValueError("unexpected symbol")
                         row = self._normalize(quote)
+                        try:
+                            report = validate_quote(row, received_at, provider_volume=getattr(quote, "volume", None))
+                        except Exception:
+                            # Diagnostics are observational: never drop a normalized
+                            # quote because an optional quality check is unavailable.
+                            report = {"state": "unknown", "warnings": ["quality_check_unknown"],
+                                      "observed_at": received_at.isoformat(), "latency_ms": None}
+                        qualities.setdefault(row["market"], []).append(report)
                         rows[row["symbol"]] = row
                         received[row["symbol"]] = received_at
                     except Exception:
@@ -417,12 +428,16 @@ class LongbridgeProvider:
                         failed_market = market_from_symbol(failed_symbol)
                         if failed_symbol in chunk and failed_market is not None:
                             errors.setdefault(failed_market, []).append("realtime_parse_error")
+                            qualities.setdefault(failed_market, []).append({
+                                "state": "invalid", "warnings": ["quote_parse_invalid"],
+                                "observed_at": received_at.isoformat(), "latency_ms": None,
+                            })
                         rejected += 1
                 if rejected:
                     self.last_errors.append({"stage": "rows", "batch": offset // MAX_SYMBOLS,
                                              "rejected": rejected, "reason": "invalid_response_fields"})
                     logger.debug("Longbridge quote batch rejected %d invalid rows", rejected)
-            self._record_realtime(wanted, rows, received, errors)
+            self._record_realtime(wanted, rows, received, errors, qualities=qualities)
         return list(rows.values())
 
     def get_realtime_for_markets(self, markets: list[str]) -> list[dict]:
