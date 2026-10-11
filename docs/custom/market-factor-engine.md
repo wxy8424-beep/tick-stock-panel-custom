@@ -15,7 +15,7 @@ the required common computations; no third-party source is extracted or added.
 
 ## Factors and exact inherited conventions
 
-| Request | Available periods | Output | Convention | Facade minimum bars |
+| Request | Available periods | Output | Convention | Research minimum bars |
 | --- | --- | --- | --- | --- |
 | MA | 5,10,20,30,60 (default20) | maN | arithmetic trailing mean | N |
 | EMA | 5,10,20,30,60 (default20) | emaN | alpha=2/(N+1), adjust=False, first-close seed | N |
@@ -34,11 +34,15 @@ initialization or MACD-histogram convention.
 
 All seven kinds are the default request. Custom periods unsupported by the
 existing implementation fail explicitly rather than creating a second formula.
-Minimum bars are the facade's conservative display policy, not proof of EMA
+Minimum bars are research mode's conservative display policy, not proof of EMA
 convergence; the existing pipeline's early seeded values remain unchanged for
 legacy consumers. Values after the facade warmup use the original computations.
 
 ## Inputs, gaps and units
+
+The default `mode="research"` retains the original strict behavior described
+below. An opt-in `mode="backtest_compat"` requires an explicit
+`compatibility_backend="polars"` or `"matrix"`; there is no guessed backend.
 
 `compute(history, requests, price_basis="as_provided")` accepts existing Polars
 daily history: nonempty string `symbol`, Date `date`, and numeric `close`. ATR
@@ -57,6 +61,51 @@ Volume is not read or converted. Unsupported volume-dependent requests fail with
 an explicit unavailable error. This stage does not unlock quantity capabilities.
 `price_basis` is caller metadata (`as_provided`, `raw`, `qfq`), not an adjustment
 operation or validation of the repository's price basis; no currency is guessed.
+
+## Compatibility semantics
+
+Legacy backtest has two different computation paths. Compatibility selects the
+existing calculator rather than copying formulas or changing its implementation:
+
+| Policy | research (default) | backtest_compat / polars | backtest_compat / matrix |
+| --- | --- | --- | --- |
+| Calculator | existing Polars pipeline per valid segment | existing Polars pipeline on the whole supplied history | existing matrix_feature kernels on Float32 time/asset arrays |
+| Warmup | strict minimum-bars mask | native rolling readiness; EMA/MACD/RSI/ATR early seeded values retained | native effective-observation readiness; early seeded values retained |
+| Gaps | reset segment and warm up again | inherited Polars null/shift/EWM behavior, no reset | inherited effective-observation behavior, no reset |
+| Initial values | inherited seed per segment, masked | inherited seed for whole symbol history | inherited matrix seed for whole valid-observation sequence |
+| Price validation | finite positive prices; ATR checks OHLC | preserve numeric source prices without research sanitation | preserve legacy Float32 projection without research sanitation |
+
+Missing/non-numeric required price columns fail explicitly in compatibility mode;
+they are not fabricated or silently changed to research mode. Invalid keys and
+duplicate dates still fail closed. Selected price factors never consume volume;
+the matrix adapter keeps volume unknown (NaN) and trading flags disabled. It does
+not execute strategies, transactions or returns. Sparse asset/date cells remain
+unknown and the output contains only input rows. Nonfinite results normalize to
+null, matching BacktestEngine's finite-output boundary and enabling strict JSON.
+This is representation normalization, not filling missing values with zero.
+
+Finite outputs and missing positions match the selected legacy path, not a promise
+that both old backends match one another. Matrix Float32 values are preserved when
+projected into the facade's Float64 columns; no precision equivalence with Polars
+is claimed. ROC keeps the facade's roc_N alias for the legacy momentum_Nd source.
+Existing consumers and their schemas remain unchanged and do not call this new
+mode yet; no legacy code or calculation definition is deleted or modified.
+
+FactorResult and JSON carry `mode` and `compatibility_backend` (additive fields,
+default research/None). Factor metadata includes `warmup_policy`: strict or
+legacy_backend. `warmup_bars` remains the research minimum-bar reference and is
+not an enforced mask in compatibility mode. It must not be used to suppress
+compatible early values. Existing positional FactorResult construction remains
+valid. `from_history()` forwards both options and uses the same explicit warmup
+range and output trimming as before.
+
+```python
+result = engine.compute(history, mode="backtest_compat",
+                        compatibility_backend="polars")
+# For the unchanged matrix backtest semantics:
+result = engine.compute(history, mode="backtest_compat",
+                        compatibility_backend="matrix")
+```
 
 ## Existing history API
 
@@ -102,7 +151,22 @@ This is a backend foundation for later consumer reuse, not an automatic migratio
 of screener/backtest/Dashboard to new warmup/gap semantics. There is no performance
 claim for large universes; calculation partitions per symbol/valid segment.
 
-## Verification
+## Semantics-mode verification
+
+- Modes plus original strict-engine tests: 49 passed.
+- Factor and existing backtest targeted regression: 384 passed.
+- Final full backend: 3026 passed, 6 skipped, 0 failed.
+- Ruff on the engine and both factor-engine test files: zero violations.
+- All supported periods are compared to unchanged production calculators on
+  empty, short, flat, declining, gap, nonfinite and multi-symbol inputs.
+  Compatibility preserves finite values exactly per backend, with nonfinite
+  values represented as null. Prefix, sparse-date, mode serialization and
+  existing history API forwarding are covered.
+- The deliberate infinity fixture exercises an existing matrix subtraction
+  RuntimeWarning; research continues to treat these prices as invalid.
+- No backtest/screener consumer, strategy, transaction or return logic changed.
+
+## Foundation verification (prior stage)
 
 - Targeted factor/pipeline/registry/DSL/screener/backtest tests: 101 passed.
 - Full backend regression: 2997 passed, 6 skipped, 0 failed.

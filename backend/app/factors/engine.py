@@ -55,19 +55,25 @@ class FactorRequest:
 DEFAULT_FACTORS = tuple(FactorRequest(kind) for kind in
                         ("ma", "ema", "macd", "rsi", "roc", "atr", "volatility"))
 
+CalculationMode = Literal["research", "backtest_compat"]
+CompatibilityBackend = Literal["polars", "matrix"]
+
 
 @dataclass(frozen=True)
 class FactorResult:
     frame: pl.DataFrame
     factors: tuple[dict, ...]
     price_basis: str
+    mode: CalculationMode = "research"
+    compatibility_backend: CompatibilityBackend | None = None
 
     def to_dict(self) -> dict:
         rows = self.frame.to_dicts()
         for row in rows:
             row["date"] = row["date"].isoformat()
         return {"rows": rows, "factors": deepcopy(list(self.factors)),
-                "price_basis": self.price_basis, "uses_volume": False}
+                "price_basis": self.price_basis, "uses_volume": False,
+                "mode": self.mode, "compatibility_backend": self.compatibility_backend}
 
 
 class MarketFactorEngine:
@@ -79,7 +85,10 @@ class MarketFactorEngine:
     """
 
     def compute(self, history: pl.DataFrame, requests: tuple[FactorRequest, ...] = DEFAULT_FACTORS,
-                *, price_basis: Literal["as_provided", "raw", "qfq"] = "as_provided") -> FactorResult:
+                *, price_basis: Literal["as_provided", "raw", "qfq"] = "as_provided",
+                mode: CalculationMode = "research",
+                compatibility_backend: CompatibilityBackend | None = None) -> FactorResult:
+        self._validate_mode(mode, compatibility_backend)
         if price_basis not in {"as_provided", "raw", "qfq"}:
             raise ValueError("unknown price basis")
         definitions = [(request, *request.definition()) for request in requests]
@@ -89,7 +98,7 @@ class MarketFactorEngine:
         if history.is_empty():
             frame = pl.DataFrame(schema={"symbol": pl.String, "date": pl.Date,
                                          **dict.fromkeys(outputs, pl.Float64)})
-            return self._result(frame, definitions, price_basis, "empty_history")
+            return self._result(frame, definitions, price_basis, "empty_history", mode, compatibility_backend)
         if not {"symbol", "date"} <= set(history.columns) or history.schema["date"] != pl.Date:
             raise ValueError("daily history requires symbol and Date columns")
         if history.schema["symbol"] != pl.String:
@@ -98,6 +107,12 @@ class MarketFactorEngine:
             raise ValueError("null history keys")
         if history.select(pl.struct("symbol", "date").is_duplicated().any()).item():
             raise ValueError("duplicate history keys")
+        if mode == "backtest_compat":
+            # Preserve legacy input prices, seeds and missing-observation policy;
+            # research sanitization/segmentation must not run before this branch.
+            frame = self._compatibility_frame(history, definitions, compatibility_backend)
+            return self._result(frame, definitions, price_basis, "insufficient_or_invalid_history",
+                                mode, compatibility_backend)
         prices = []
         for column in ("close", "high", "low"):
             if column not in history.columns or not history.schema[column].is_numeric():
@@ -137,19 +152,91 @@ class MarketFactorEngine:
         return self._result(result, definitions, price_basis, "insufficient_or_invalid_history")
 
     @staticmethod
-    def _result(frame, definitions, price_basis, reason):
+    def _result(frame, definitions, price_basis, reason, mode="research", compatibility_backend=None):
         metadata = []
         for request, mapping, minimum, _ in definitions:
             counts = [frame[column].len() - frame[column].null_count() for column in mapping]
             state = "available" if counts and min(counts) else "unavailable"
             metadata.append({"kind": request.kind.lower(), "columns": list(mapping),
-                             "warmup_bars": minimum, "state": state,
+                             "warmup_bars": minimum,
+                             "warmup_policy": "strict" if mode == "research" else "legacy_backend",
+                             "state": state,
                              "reason": None if state == "available" else reason})
-        return FactorResult(frame, tuple(metadata), price_basis)
+        return FactorResult(frame, tuple(metadata), price_basis, mode, compatibility_backend)
+
+    @staticmethod
+    def _validate_mode(mode, backend):
+        if mode not in {"research", "backtest_compat"}:
+            raise ValueError("unknown calculation mode")
+        if mode == "research" and backend is not None:
+            raise ValueError("research mode cannot select a compatibility backend")
+        if mode == "backtest_compat" and backend not in {"polars", "matrix"}:
+            raise ValueError("backtest_compat requires explicit polars or matrix backend")
+
+    @staticmethod
+    def _compatibility_frame(history, definitions, backend):
+        mapping = {target: source for _, fields, _, _ in definitions for target, source in fields.items()}
+        if not mapping:
+            return history.select("symbol", "date").sort("symbol", "date")
+        required = {column for _, _, _, columns in definitions for column in columns}
+        for column in required:
+            if column not in history.columns or not history.schema[column].is_numeric():
+                raise ValueError(f"legacy compatibility requires numeric {column}")
+        work = history.select("symbol", "date", *sorted(required)).sort("symbol", "date")
+        if backend == "polars":
+            frame = compute_indicators(work, needed=set(mapping.values()), assume_sorted=True)
+        else:
+            frame = MarketFactorEngine._matrix_compatibility(work, mapping)
+        # BacktestEngine.load_panel_for_backtest normalizes nonfinite outputs.
+        # Do not change finite values or mask seeded early results.
+        values = []
+        for target, source in mapping.items():
+            value = pl.col(source).cast(pl.Float64)
+            values.append(pl.when(value.is_finite()).then(value).alias(target))
+        return frame.select("symbol", "date", *values)
+
+    @staticmethod
+    def _matrix_compatibility(work, mapping):
+        """Reuse legacy effective-observation kernels; never construct trade data."""
+        import numpy as np
+
+        from app.backtest.matrix import MarketDataMatrix, matrix_feature
+
+        symbols = tuple(work["symbol"].unique().sort().to_list())
+        dates = work["date"].unique().sort().to_numpy()
+        time_ids = np.searchsorted(dates, work["date"].to_numpy())
+        asset_ids = np.searchsorted(symbols, work["symbol"].to_numpy())
+        shape = (len(dates), len(symbols))
+
+        def price(column):
+            values = np.full(shape, np.nan, dtype=np.float32)
+            if column in work.columns:
+                values[time_ids, asset_ids] = work[column].cast(pl.Float32).to_numpy()
+            values.flags.writeable = False
+            return values
+
+        unknown = price("_absent")
+        disabled = np.zeros(shape, dtype=bool)
+        disabled.flags.writeable = False
+        market = MarketDataMatrix(
+            timestamps=dates.astype("datetime64[ms]").astype(np.int64),
+            timestamp_labels=tuple(str(day) for day in dates),
+            session_ids=np.arange(len(dates), dtype=np.int32), symbols=symbols,
+            names=tuple("" for _ in symbols), open=unknown, high=price("high"),
+            low=price("low"), close=price("close"), volume=unknown,
+            tradable=disabled, limit_up_locked=disabled, limit_down_locked=disabled, fields={},
+        )
+        # Volume stays NaN and no tradability/return simulation is performed.
+        return work.select("symbol", "date").with_columns(
+            pl.Series(source, matrix_feature(market, source)[time_ids, asset_ids])
+            for source in set(mapping.values())
+        )
 
     def from_history(self, repository: DailyHistory, asset_type: str, symbol: str,
                      start: date, end: date, requests: tuple[FactorRequest, ...] = DEFAULT_FACTORS,
-                     *, history_start: date | None = None, price_basis="as_provided") -> FactorResult:
+                     *, history_start: date | None = None, price_basis="as_provided",
+                     mode: CalculationMode = "research",
+                     compatibility_backend: CompatibilityBackend | None = None) -> FactorResult:
         """Read existing daily API only; caller specifies extra warmup history.
 
         No calendar-day heuristic for a trading-bar window. Repositories may lack
@@ -157,6 +244,7 @@ class MarketFactorEngine:
         """
         if asset_type not in {"stock", "etf", "index"}:
             raise ValueError("unknown asset type")
+        self._validate_mode(mode, compatibility_backend)
         history_start = start if history_start is None else history_start
         if not history_start <= start <= end:
             raise ValueError("invalid history range")
@@ -167,7 +255,9 @@ class MarketFactorEngine:
         if not frame.is_empty():
             # Do not trust out-of-range or other-symbol rows from a cache/API.
             frame = frame.filter((pl.col("symbol") == symbol) & pl.col("date").is_between(history_start, end))
-        result = self.compute(frame, requests, price_basis=price_basis)
+        result = self.compute(frame, requests, price_basis=price_basis, mode=mode,
+                              compatibility_backend=compatibility_backend)
         trimmed = result.frame.filter(pl.col("date").is_between(start, end))
         definitions = [(request, *request.definition()) for request in requests]
-        return self._result(trimmed, definitions, price_basis, "no_usable_history_in_range")
+        return self._result(trimmed, definitions, price_basis, "no_usable_history_in_range",
+                            mode, compatibility_backend)
