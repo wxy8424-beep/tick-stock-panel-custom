@@ -274,6 +274,20 @@ def test_read_queries_empty_do_not_create_database(tmp_path):
     assert not engine.store.path.exists() and not engine.input.path.exists()
 
 
+def test_health_includes_authoritative_market_sessions_without_worker(tmp_path):
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).get("/api/intraday/anomalies/health")
+    assert response.status_code == 200
+    result = response.json()
+    assert result["state"] == "not_started"
+    assert datetime.fromisoformat(result["observed_at"]).tzinfo is not None
+    assert set(result["market_sessions"]) == {"CN", "HK", "US"}
+    for market, actual in result["market_sessions"].items():
+        expected = get_market_session(market, datetime.fromisoformat(result["observed_at"]))
+        assert actual == {"session_state": expected.session_state, "diagnostic_code": expected.diagnostic_code}
+
+
 @pytest.mark.parametrize("symbol,clock", [
     ("600519.SH", datetime(2026, 10, 9, 2, tzinfo=UTC)),
     ("700.HK", datetime(2026, 10, 9, 2, tzinfo=UTC)),

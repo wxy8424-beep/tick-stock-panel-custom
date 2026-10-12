@@ -8,6 +8,27 @@ import type { CalendarCoverage, MarketSessionInfo } from '@/lib/marketSession'
 
 const BASE = ''
 
+export interface AnomalySnapshot {
+  snapshot_id: number; price: string; quote_timestamp: number; receive_timestamp: number
+  quality_state: string; warning_codes: string[]
+}
+export interface AnomalyEvent {
+  store_id: number; event_id: string; episode_id: string; symbol: string; market: 'CN' | 'HK' | 'US'
+  event_type: 'rapid_price_move' | 'intraday_breakout' | 'volatility_expansion'
+  direction: 'up' | 'down'; severity: 'low' | 'medium' | 'high'
+  status: 'first_trigger' | 'sustained' | 'escalation'; detected_at: string
+  window_start: string; window_end: string; observed_value: string; baseline_value: string
+  change_value: string; change_pct: string; threshold: string; rule_id: string; rule_version: string; source: string
+  evidence: { current: AnomalySnapshot; baseline: AnomalySnapshot[]; sample_count: number
+    maximum_gap_ms: number; baseline_scope: string; volume_used: false; volume_status: string
+    history_truncated: boolean; medium_multiple: string; high_multiple: string; trigger_multiple: string }
+}
+export interface AnomalyHealth {
+  state: string; observed_at?: string; checkpoint?: number | null; processed?: number
+  diagnostics: { state: string; reason?: string | null; rule_id?: string; snapshot_id?: number }[]
+  market_sessions?: Partial<Record<'CN' | 'HK' | 'US', { session_state: string; diagnostic_code?: string | null }>>
+}
+
 export interface HKRow {
   symbol?: string
   name?: string
@@ -2295,6 +2316,9 @@ export const api = {
   usDashboard: (symbol?: string) => request<USDashboardResponse>(`/api/dashboard/us${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   hkDashboard: (symbol?: string) => request<HKDashboardResponse>(`/api/dashboard/hk${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   health: () => request<{ status: string; version: string; mode: string }>('/health'),
+  anomalyRecent: (before?: number) => request<{ rows: AnomalyEvent[]; next_before_id: number | null }>(`/api/intraday/anomalies/recent?limit=100${before ? `&before_id=${before}` : ''}`, { quiet: true }),
+  anomalyHealth: () => request<AnomalyHealth>('/api/intraday/anomalies/health', { quiet: true }),
+  anomalyEpisodes: (symbol: string) => request<{ rows: Record<string, unknown>[] }>(`/api/intraday/anomalies/episodes?symbol=${encodeURIComponent(symbol)}`, { quiet: true }),
 
   // ===== Auth (访问认证) =====
   authStatus: () =>

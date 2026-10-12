@@ -1,0 +1,6 @@
+.anomaly-card { animation: anomaly-enter 320ms ease-out both; }
+.anomaly-card[data-arrival="medium"] { animation: anomaly-emphasis 950ms ease-out both; }
+.anomaly-card[data-arrival="high"], .anomaly-notice { animation: anomaly-emphasis 1200ms ease-out both; }
+@keyframes anomaly-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes anomaly-emphasis { 0% { transform: translateY(12px); box-shadow: 0 0 0 2px #e7b55c, 0 0 28px #e7b55c55; } 100% { transform: translateY(0); box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .anomaly-card, .anomaly-notice { animation: none !important; scroll-behavior: auto !important; } }

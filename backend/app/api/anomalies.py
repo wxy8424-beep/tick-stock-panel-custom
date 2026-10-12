@@ -1,9 +1,11 @@
 """Read-only anomaly/evidence queries. Never evaluate or fetch quotes on GET."""
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import AwareDatetime
 
+from app.market_session import get_market_session
 from app.services.anomaly_engine import AnomalyStore
 
 router = APIRouter(prefix="/api/intraday/anomalies", tags=["anomalies"])
@@ -46,6 +48,14 @@ def episodes(request: Request, symbol: str = Query(..., max_length=128), limit: 
 @router.get("/health")
 def health(request: Request):
     worker = getattr(request.app.state, "anomaly_worker", None)
-    return worker.health() if worker else {"state": "not_started", "diagnostics": [],
+    result = worker.health() if worker else {"state": "not_started", "diagnostics": [],
         "volatility_expansion": {"status": "unsupported", "reason": "snapshot_cadence_not_authoritative"},
         "volume_spike": {"status": "unsupported", "reason": "longbridge_volume_unit_unverified"}}
+    now = datetime.now(UTC)
+    result["observed_at"] = now.isoformat()
+    result["market_sessions"] = {
+        market: {"session_state": session.session_state, "diagnostic_code": session.diagnostic_code}
+        for market in ("CN", "HK", "US")
+        for session in (get_market_session(market, now),)
+    }
+    return result

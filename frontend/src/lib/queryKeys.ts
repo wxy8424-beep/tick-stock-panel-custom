@@ -8,6 +8,9 @@
 // ===== Query Key 工厂 =====
 
 export const QK = {
+  anomalyRecent: (before?: number) => ['anomaly-recent', before ?? 'latest'] as const,
+  anomalyHealth: ['anomaly-health'] as const,
+  anomalyEpisodes: (symbol: string) => ['anomaly-episodes', symbol] as const,
   // 全局 / 共享 (Layout 预取)
   capabilities:   ['capabilities'] as const,
   settings:       ['settings'] as const,
