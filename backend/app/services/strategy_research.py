@@ -163,6 +163,19 @@ class StrategyResearchStore:
         with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)) as db:
             return db.execute(sql, params).fetchall()
 
+    def execute_historical(self, strategy_id: str, **research_inputs) -> dict:
+        """Explicit opt-in historical price research; existing execute is unchanged."""
+        from app.services.historical_strategy_research import HistoricalStrategyResearch
+
+        definition = self.get_definition(strategy_id)
+        if definition is None:
+            raise KeyError("unknown research strategy")
+        result = HistoricalStrategyResearch().run(definition, **research_inputs)
+        payload = json.dumps(result, allow_nan=False)
+        with closing(self._connect()) as db, db:
+            db.execute("INSERT INTO strategy_results(strategy_id, result) VALUES (?, ?)", (strategy_id, payload))
+        return result
+
     def get_definition(self, strategy_id: str) -> StrategyDefinition | None:
         rows = self._query("SELECT definition FROM strategy_definitions WHERE strategy_id=?", (strategy_id,))
         return StrategyDefinition.model_validate_json(rows[0][0]) if rows else None
