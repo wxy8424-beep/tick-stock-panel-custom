@@ -1,12 +1,17 @@
 """Read-only anomaly/evidence queries. Never evaluate or fetch quotes on GET."""
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import AwareDatetime
 
 from app.market_session import get_market_session
 from app.services.anomaly_engine import AnomalyStore, StaleAnomalyCursorError
+from app.services.historical_baseline import (
+    HistoricalContextStore,
+    enrich_response,
+    unknown_context,
+)
 
 router = APIRouter(prefix="/api/intraday/anomalies", tags=["anomalies"])
 
@@ -26,10 +31,11 @@ def recent(request: Request, symbol: str | None = Query(None, max_length=128),
            before_id: int | None = Query(None, ge=1), limit: int = Query(100, ge=1, le=200)):
     store = _store(request)
     try:
-        return store.query(symbol=symbol, market=market, event_type=event_type, severity=severity,
+        page = store.query(symbol=symbol, market=market, event_type=event_type, severity=severity,
                            start_ms=int(start.timestamp() * 1000) if start else None,
                            end_ms=int(end.timestamp() * 1000) if end else None,
                            before_id=before_id, limit=limit) if store else {"rows": [], "next_before_id": None}
+        return enrich_response(store.path.parent.parent, page) if store else page
     except ValueError:
         raise HTTPException(422, "无效的异动查询范围") from None
     except Exception:
@@ -52,13 +58,36 @@ def incremental(request: Request, after_id: int = Query(0, ge=0),
     if store is None:
         raise HTTPException(503, "异动事件存储未初始化")
     try:
-        return store.incremental(after_id, after_event_id, limit)
+        return enrich_response(store.path.parent.parent, store.incremental(after_id, after_event_id, limit))
     except StaleAnomalyCursorError:
         raise HTTPException(409, "交付游标失效. 请刷新后重新读取历史. 不会自动跳过事件") from None
     except ValueError:
         raise HTTPException(422, "无效的交付游标") from None
     except Exception:
         raise HTTPException(503, "异动事件存储暂不可读") from None
+
+
+@router.get("/historical-context")
+def historical_context(request: Request, event_id: str = Query(..., min_length=1, max_length=64)):
+    store = _store(request)
+    if store is None:
+        return unknown_context("event_storage_unavailable")
+    try:
+        return HistoricalContextStore(store.path.parent.parent).read_many([event_id]).get(event_id, unknown_context())
+    except Exception:
+        return unknown_context("context_storage_unavailable")
+
+
+@router.get("/historical-contexts")
+def historical_contexts(request: Request, event_id: Annotated[list[str], Query(min_length=1, max_length=100)]):
+    if any(not value or len(value) > 64 for value in event_id):
+        raise HTTPException(422, "无效事件ID")
+    store = _store(request)
+    try:
+        values = HistoricalContextStore(store.path.parent.parent).read_many(event_id) if store else {}
+        return {"contexts": {key: values.get(key, unknown_context()) for key in event_id}}
+    except Exception:
+        return {"contexts": {key: unknown_context("context_storage_unavailable") for key in event_id}}
 
 
 @router.get("/health")

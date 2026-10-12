@@ -23,6 +23,8 @@ class AnomalyWorker:
         self._generated_total = 0
         self._processed_by_market = {market: 0 for market in ("CN", "HK", "US")}
         self._evaluations_by_market = {market: 0 for market in ("CN", "HK", "US")}
+        self._history_worker = None
+        self._data_dir = data_dir
 
     def health(self) -> dict:
         with self._lock:
@@ -31,6 +33,7 @@ class AnomalyWorker:
                     "generated_total": self._generated_total,
                     "processed_by_market": dict(self._processed_by_market),
                     "evaluations_by_market": dict(self._evaluations_by_market),
+                    "historical_enrichment": self._history_worker.health() if self._history_worker else {"state": "not_started"},
                     "volatility_expansion": {"status": "unsupported", "reason": "snapshot_cadence_not_authoritative"},
                     "volume_spike": {"status": "unsupported", "reason": "longbridge_volume_unit_unverified"},
                     "rule_version": self.engine.policy.version}
@@ -64,6 +67,13 @@ class AnomalyWorker:
             return
         self._thread = threading.Thread(target=self._run, daemon=True, name="archive-anomaly-observer")
         self._thread.start()
+        try:
+            from app.services.historical_enrichment import HistoricalEnrichmentWorker
+
+            self._history_worker = HistoricalEnrichmentWorker(self._data_dir)
+            self._history_worker.start()
+        except Exception:
+            logger.warning("历史上下文不可用. 原异动观察继续运行")
 
     def _run(self):
         while not self._stop.is_set():
@@ -72,6 +82,8 @@ class AnomalyWorker:
 
     def close(self) -> None:
         self._stop.set()
+        if self._history_worker is not None:
+            self._history_worker.close()
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():

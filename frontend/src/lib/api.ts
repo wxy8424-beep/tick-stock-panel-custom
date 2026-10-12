@@ -8,6 +8,13 @@ import type { CalendarCoverage, MarketSessionInfo } from '@/lib/marketSession'
 
 const BASE = ''
 
+export interface HistoricalAnomalyContext {
+  status: string; blocker: string | null; atr14: string | null; reference_close?: string | null
+  move_absolute: string | null; move_atr_ratio: string | null; baseline_as_of: string | null
+  observations: number | null; source: string | null; adjustment_method: string | null
+  baseline_version: string; as_of_date?: string; lookback_start?: string | null; lookback_end?: string | null
+  pit_capable?: boolean; pit_blocker?: string; calculation?: Record<string, unknown>; bars?: Record<string, unknown>[]
+}
 export interface AnomalySnapshot {
   snapshot_id: number; price: string; quote_timestamp: number; receive_timestamp: number
   quality_state: string; warning_codes: string[]
@@ -19,7 +26,7 @@ export interface AnomalyEvent {
   status: 'first_trigger' | 'sustained' | 'escalation'; detected_at: string
   window_start: string; window_end: string; observed_value: string; baseline_value: string
   change_value: string; change_pct: string; threshold: string; rule_id: string; rule_version: string; source: string
-  evidence: { current: AnomalySnapshot; baseline: AnomalySnapshot[]; sample_count: number
+  evidence: { historical_context?: HistoricalAnomalyContext | null; current: AnomalySnapshot; baseline: AnomalySnapshot[]; sample_count: number
     maximum_gap_ms: number; baseline_scope: string; volume_used: false; volume_status: string
     history_truncated: boolean; medium_multiple: string; high_multiple: string; trigger_multiple: string }
 }
@@ -2323,6 +2330,8 @@ export const api = {
   anomalyRecent: (before?: number) => request<AnomalyPage>(`/api/intraday/anomalies/recent?limit=100${before ? `&before_id=${before}` : ''}`, { quiet: true }),
   anomalyIncremental: (cursor: AnomalyCursor) => request<AnomalyIncrement>(`/api/intraday/anomalies/incremental?after_id=${cursor.sequence}${cursor.event_id ? `&after_event_id=${encodeURIComponent(cursor.event_id)}` : ''}&limit=100`, { quiet: true }),
   anomalyHealth: () => request<AnomalyHealth>('/api/intraday/anomalies/health', { quiet: true }),
+  anomalyHistoricalContext: (eventId: string) => request<HistoricalAnomalyContext>(`/api/intraday/anomalies/historical-context?event_id=${encodeURIComponent(eventId)}`, { quiet: true }),
+  anomalyHistoricalContexts: (eventIds: string[]) => request<{ contexts: Record<string, HistoricalAnomalyContext> }>(`/api/intraday/anomalies/historical-contexts?${new URLSearchParams(eventIds.map(id => ['event_id', id]))}`, { quiet: true }),
   anomalyEpisodes: (symbol: string) => request<{ rows: Record<string, unknown>[] }>(`/api/intraday/anomalies/episodes?symbol=${encodeURIComponent(symbol)}`, { quiet: true }),
 
   // ===== Auth (访问认证) =====

@@ -7,9 +7,13 @@ import { ANOMALY_TYPES, EVENT_STATUS, SEVERITY_LABELS, eventTime, filterEvents, 
 import { useAnomalyDelivery } from '@/lib/useAnomalyDelivery'
 import { marketSessionLabel } from '@/lib/marketSession'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
+import { HistoricalContextEvidence, HistoricalContextSummary } from '@/components/anomalies/HistoricalContext'
 import './AnomalyMonitoring.css'
 
 function Evidence({ event }: { event: AnomalyEvent }) {
+  const history = useQuery({ queryKey: QK.anomalyHistoricalContext(event.event_id), queryFn: () => api.anomalyHistoricalContext(event.event_id),
+    refetchInterval: query => !query.state.data || query.state.data.blocker === 'enrichment_pending' ? 3000 : false })
+  const historicalContext = history.data ?? event.evidence.historical_context
   const episode = useQuery({ queryKey: QK.anomalyEpisodes(event.symbol), queryFn: () => api.anomalyEpisodes(event.symbol), refetchInterval: 3000 })
   const matching = episode.data?.rows.find(row => row.episode_id === event.episode_id)
   return <div className="mt-4 border-t border-border pt-4 text-xs text-secondary">
@@ -23,7 +27,8 @@ function Evidence({ event }: { event: AnomalyEvent }) {
       <div><dt>Episode</dt><dd className="break-all">{event.episode_id}</dd><dd>{episode.isError ? 'Episode 查询失败' : matching ? `后端状态：${({ first_trigger: '首次触发', sustained: '持续观察', escalation: '严重程度升级', resolved: '已恢复' } as Record<string, string>)[String(matching.status)] ?? '未识别'} · 最高严重程度：${SEVERITY_LABELS[matching.peak_severity as 'high'] ?? '未确认'}` : '当前 episode 记录未返回'}</dd></div>
       <div><dt>成交量</dt><dd>未参与计算 · 单位未确认</dd></div>
     </dl>
-    <details className="mt-4"><summary className="cursor-pointer">完整后端事件证据（原始字段）</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-card bg-base p-3">{JSON.stringify(event, null, 2)}</pre></details>
+    <HistoricalContextEvidence context={historicalContext} />
+    <details className="mt-4"><summary className="cursor-pointer">完整后端事件证据（原始字段）</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-card bg-base p-3">{JSON.stringify({ ...event, evidence: { ...event.evidence, historical_context: historicalContext } }, null, 2)}</pre></details>
   </div>
 }
 
@@ -51,6 +56,9 @@ export function AnomalyMonitoring() {
   useEffect(() => { if (!notice.length) return; const timer = setTimeout(() => setNotice([]), 8000); return () => clearTimeout(timer) }, [notice])
   const rows = [...new Map([...older, ...delivery.rows].map(row => [row.event_id, row])).values()]
   const visible = filterEvents(rows, market, severity, type, symbol)
+  const historyIds = visible.slice(0, 100).map(event => event.event_id).sort()
+  const histories = useQuery({ queryKey: QK.anomalyHistoricalContexts(historyIds), queryFn: () => api.anomalyHistoricalContexts(historyIds), enabled: historyIds.length > 0,
+    refetchInterval: query => !query.state.data || Object.values(query.state.data.contexts).some(context => context.blocker === 'enrichment_pending') ? 3000 : false })
   const state = monitoringState(health.data, delivery.state?.api_reachable === false || health.isError)
   const sessions = health.data?.market_sessions
   const locate = (event: AnomalyEvent) => {
@@ -92,6 +100,7 @@ export function AnomalyMonitoring() {
     {!delivery.state ? <p className="p-8 text-center text-muted">正在恢复历史事件…</p> : !visible.length ? <div className="rounded-card border border-border bg-surface p-12 text-center"><Shield className="mx-auto mb-3 text-muted" /><h2>{rows.length ? '当前筛选下暂无事件' : '暂无异动事件'}</h2><p className="mt-2 text-xs text-muted">等待符合条件的后端证据，不生成演示行情。</p></div> : <section aria-label="实时异动流" className="space-y-3">{visible.map(event => <article id={`anomaly-${event.event_id}`} key={event.event_id} data-severity={event.severity} data-arrival={arrival.get(event.event_id)} className={`anomaly-card min-w-0 rounded-card border bg-surface p-4 sm:p-5 ${event.severity === 'high' ? 'border-amber-300/80' : event.severity === 'medium' ? 'border-amber-500/40' : 'border-border'}`}>
       <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><strong className="font-mono text-lg">{event.symbol}</strong><span className="text-xs text-muted">{event.market}</span><span className="rounded-btn bg-elevated px-2 py-1 text-xs">{SEVERITY_LABELS[event.severity]}</span><span className="text-xs text-secondary">{EVENT_STATUS[event.status]}</span></div><h2 className="mt-2 text-sm">{ANOMALY_TYPES[event.event_type]} · {event.direction === 'up' ? '↑ 向上' : '↓ 向下'}</h2></div><div className="text-right"><div className="font-mono text-2xl">{percent(event.change_pct)}</div><div className="text-xs text-muted">观测价 {event.observed_value}</div></div></div>
       <p className="mt-3 break-words text-xs text-secondary">{eventTime(event.detected_at)} · 窗口 {eventTime(event.window_start)} → {eventTime(event.window_end)} · {event.evidence.sample_count} 个证据样本</p>
+      <HistoricalContextSummary context={histories.data?.contexts[event.event_id] ?? event.evidence.historical_context} />
       <div className="mt-4 flex flex-wrap gap-3"><button aria-expanded={open === event.event_id} onClick={() => setOpen(open === event.event_id ? null : event.event_id)} className="flex items-center gap-1 text-xs text-amber-200">{open === event.event_id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}查看证据</button>{event.market === 'CN' && <button className="text-xs text-secondary" onClick={() => setPreview(event.symbol)}>查看个股</button>}</div>
       {open === event.event_id && <Evidence event={event} />}
     </article>)}</section>}
