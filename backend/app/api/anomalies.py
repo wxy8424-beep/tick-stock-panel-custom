@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import AwareDatetime
 
 from app.market_session import get_market_session
-from app.services.anomaly_engine import AnomalyStore
+from app.services.anomaly_engine import AnomalyStore, StaleAnomalyCursorError
 
 router = APIRouter(prefix="/api/intraday/anomalies", tags=["anomalies"])
 
@@ -45,6 +45,22 @@ def episodes(request: Request, symbol: str = Query(..., max_length=128), limit: 
         raise HTTPException(503, "异动 episode 暂不可读") from None
 
 
+@router.get("/incremental")
+def incremental(request: Request, after_id: int = Query(0, ge=0),
+                after_event_id: str | None = Query(None, max_length=64), limit: int = Query(100, ge=1, le=200)):
+    store = _store(request)
+    if store is None:
+        raise HTTPException(503, "异动事件存储未初始化")
+    try:
+        return store.incremental(after_id, after_event_id, limit)
+    except StaleAnomalyCursorError:
+        raise HTTPException(409, "交付游标失效. 请刷新后重新读取历史. 不会自动跳过事件") from None
+    except ValueError:
+        raise HTTPException(422, "无效的交付游标") from None
+    except Exception:
+        raise HTTPException(503, "异动事件存储暂不可读") from None
+
+
 @router.get("/health")
 def health(request: Request):
     worker = getattr(request.app.state, "anomaly_worker", None)
@@ -58,4 +74,9 @@ def health(request: Request):
         for market in ("CN", "HK", "US")
         for session in (get_market_session(market, now),)
     }
+    store = _store(request)
+    try:
+        result["delivery"] = {"state": "available", **store.delivery_state()} if store else {"state": "unknown"}
+    except Exception:
+        result["delivery"] = {"state": "unavailable"}
     return result

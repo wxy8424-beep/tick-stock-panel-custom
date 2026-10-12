@@ -18,10 +18,19 @@ class AnomalyWorker:
         self._thread = None
         self._last_warning = 0.0
         self._health = {"state": "not_started", "processed": 0, "checkpoint": None, "diagnostics": []}
+        self._processed_total = 0
+        self._evaluations_total = 0
+        self._generated_total = 0
+        self._processed_by_market = {market: 0 for market in ("CN", "HK", "US")}
+        self._evaluations_by_market = {market: 0 for market in ("CN", "HK", "US")}
 
     def health(self) -> dict:
         with self._lock:
             return {**self._health, "diagnostics": [dict(item) for item in self._health["diagnostics"]],
+                    "processed_total": self._processed_total, "evaluations_total": self._evaluations_total,
+                    "generated_total": self._generated_total,
+                    "processed_by_market": dict(self._processed_by_market),
+                    "evaluations_by_market": dict(self._evaluations_by_market),
                     "volatility_expansion": {"status": "unsupported", "reason": "snapshot_cadence_not_authoritative"},
                     "volume_spike": {"status": "unsupported", "reason": "longbridge_volume_unit_unverified"},
                     "rule_version": self.engine.policy.version}
@@ -34,8 +43,16 @@ class AnomalyWorker:
                       "diagnostics": [{"state": "unknown", "reason": "anomaly_worker_failed"}]}
         failed = result["checkpoint"] is None
         with self._lock:
+            self._processed_total += result["processed"]
+            # Each processed row assesses every configured rule once; volatility is diagnostic-only.
+            self._evaluations_total += result["processed"] * len(self.engine.policy.rules)
+            self._generated_total += len(result.get("events", []))
+            for market, count in result.get("processed_by_market", {}).items():
+                self._processed_by_market[market] += count
+                self._evaluations_by_market[market] += count * len(self.engine.policy.rules)
             self._health = {"state": "unavailable" if failed else "observing",
                             "processed": result["processed"], "checkpoint": result["checkpoint"],
+                            "last_tick_at": as_of.isoformat(),
                             "diagnostics": result["diagnostics"]}
         if failed and time.monotonic() - self._last_warning >= 30:
             logger.warning("异动观察不可用. 实时行情链路不受影响. 详情见异动 health diagnostic")

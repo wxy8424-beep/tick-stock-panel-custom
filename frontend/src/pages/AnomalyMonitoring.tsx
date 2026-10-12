@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Activity, ChevronDown, ChevronUp, Shield, X } from 'lucide-react'
 import { api, type AnomalyEvent } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
-import { ANOMALY_TYPES, AttentionLedger, EVENT_STATUS, SEVERITY_LABELS, eventTime, filterEvents, monitoringState, percent } from '@/lib/anomalyPresentation'
+import { ANOMALY_TYPES, EVENT_STATUS, SEVERITY_LABELS, eventTime, filterEvents, monitoringState, percent } from '@/lib/anomalyPresentation'
+import { useAnomalyDelivery } from '@/lib/useAnomalyDelivery'
 import { marketSessionLabel } from '@/lib/marketSession'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import './AnomalyMonitoring.css'
@@ -28,7 +29,14 @@ function Evidence({ event }: { event: AnomalyEvent }) {
 
 export function AnomalyMonitoring() {
   const client = useQueryClient()
-  const recent = useQuery({ queryKey: QK.anomalyRecent(), queryFn: () => api.anomalyRecent(), refetchInterval: 3000, retry: 1 })
+  const recent = useQuery({ queryKey: QK.anomalyRecent(), queryFn: () => api.anomalyRecent(), enabled: false })
+  const [notice, setNotice] = useState<AnomalyEvent[]>([])
+  const [arrival, setArrival] = useState(new Map<string, string>())
+  const onAttention = useCallback((high: AnomalyEvent[], fresh: AnomalyEvent[]) => {
+    if (fresh.length) setArrival(new Map(fresh.map(row => [row.event_id, row.severity])))
+    if (high.length) setNotice(previous => [...new Map([...previous, ...high].map(row => [row.event_id, row])).values()])
+  }, [])
+  const delivery = useAnomalyDelivery(onAttention)
   const health = useQuery({ queryKey: QK.anomalyHealth, queryFn: api.anomalyHealth, refetchInterval: 3000, retry: 1 })
   const [older, setOlder] = useState<AnomalyEvent[]>([])
   const [cursor, setCursor] = useState<number | null | undefined>(undefined)
@@ -40,19 +48,10 @@ export function AnomalyMonitoring() {
   const [symbol, setSymbol] = useState('')
   const [open, setOpen] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
-  const [notice, setNotice] = useState<AnomalyEvent[]>([])
-  const [arrival, setArrival] = useState(new Map<string, string>())
-  const ledger = useRef(new AttentionLedger())
-  useEffect(() => {
-    if (!recent.data) return
-    const incoming = ledger.current.accept(recent.data.rows)
-    if (incoming.fresh.length) setArrival(new Map(incoming.fresh.map(row => [row.event_id, row.severity])))
-    if (incoming.high.length) setNotice(incoming.high)
-  }, [recent.data])
   useEffect(() => { if (!notice.length) return; const timer = setTimeout(() => setNotice([]), 8000); return () => clearTimeout(timer) }, [notice])
-  const rows = [...new Map([...older, ...(recent.data?.rows ?? [])].map(row => [row.event_id, row])).values()]
+  const rows = [...new Map([...older, ...delivery.rows].map(row => [row.event_id, row])).values()]
   const visible = filterEvents(rows, market, severity, type, symbol)
-  const state = monitoringState(health.data, recent.isError || health.isError)
+  const state = monitoringState(health.data, delivery.state?.api_reachable === false || health.isError)
   const sessions = health.data?.market_sessions
   const locate = (event: AnomalyEvent) => {
     setMarket('ALL'); setSeverity('ALL'); setType('ALL'); setSymbol(''); setOpen(event.event_id)
@@ -73,6 +72,13 @@ export function AnomalyMonitoring() {
       <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">{(['high', 'medium', 'low'] as const).map(level => <div key={level} className="rounded-card border border-border bg-base p-3"><div className="text-xs text-muted">{SEVERITY_LABELS[level]} · 已加载事件</div><div className="mt-1 font-mono text-2xl">{rows.filter(row => row.severity === level).length}</div></div>)}<div className="rounded-card border border-border bg-base p-3"><div className="text-xs text-muted">最新事件 · 本地时间</div><div className="mt-2 text-xs">{rows.length ? eventTime(filterEvents(rows, 'ALL', 'ALL', 'ALL', '')[0].detected_at) : '暂无'}</div></div></div>
       <div className="mt-4 flex flex-wrap gap-3 text-xs text-secondary">{(['CN', 'HK', 'US'] as const).map(code => <span key={code}>{code}：{marketSessionLabel(sessions?.[code])}</span>)}</div>
       <p className="mt-3 text-xs text-muted">波动扩张 / 成交量异动暂未启用。盘中真实触发尚未完成验证；连接正常不代表数据已完整。</p>
+      <div aria-label="交付诊断" className="mt-3 flex flex-wrap gap-3 text-xs text-secondary">
+        <span>交付：{delivery.state?.status === 'caught_up' ? '已追平已读取服务端水位' : delivery.state?.status === 'catching_up' ? '正在分页追赶' : delivery.state?.error ?? '状态未确认'}</span>
+        <span>已消费序号 {delivery.state?.cursor?.sequence ?? '—'} / 服务端 {health.data?.delivery?.latest_sequence ?? delivery.state?.latest_sequence ?? '—'}</span>
+        <span>最近成功读取：{delivery.state?.last_success_at ? eventTime(delivery.state.last_success_at) : '—'}</span>
+        <span>服务端最新事件：{delivery.state?.latest_event_detected_at ? eventTime(delivery.state.latest_event_detected_at) : '暂无'}</span>
+        {health.data?.delivery?.latest_sequence != null && delivery.state?.cursor && health.data.delivery.latest_sequence > delivery.state.cursor.sequence && <strong className="text-amber-200">前端落后，正在追赶</strong>}
+      </div>
     </header>
     {!!notice.length && <aside role="alert" className="anomaly-notice rounded-card border-2 border-amber-300 bg-amber-400/10 p-4"><div className="mb-2 flex justify-between gap-2"><strong className="text-amber-200">高严重程度新异动 · {notice.length} 条</strong><button aria-label="关闭提醒" onClick={() => setNotice([])}><X size={18} /></button></div>{notice.map(event => <button key={event.event_id} onClick={() => locate(event)} className="mb-1 block text-left text-sm">{event.symbol} · {ANOMALY_TYPES[event.event_type]} · {event.direction === 'up' ? '向上' : '向下'} {percent(event.change_pct)} · HIGH · {EVENT_STATUS[event.status]} · {eventTime(event.detected_at)}</button>)}</aside>}
     <section aria-label="事件筛选" className="flex flex-wrap gap-3 rounded-card border border-border bg-surface p-3">
@@ -83,7 +89,7 @@ export function AnomalyMonitoring() {
     </section>
     {state.state === 'unavailable' && <p className="rounded-card border border-border p-4 text-sm">连接或引擎暂不可用。历史事件可继续查看，不代表当前正在产生新事件。</p>}
     {market !== 'ALL' && sessions?.[market as 'CN']?.session_state !== 'regular' && <p className="text-sm text-secondary">当前市场关闭或时段未确认，不会产生已确认常规交易时段异动。</p>}
-    {recent.isPending ? <p className="p-8 text-center text-muted">正在恢复历史事件…</p> : !visible.length ? <div className="rounded-card border border-border bg-surface p-12 text-center"><Shield className="mx-auto mb-3 text-muted" /><h2>{rows.length ? '当前筛选下暂无事件' : '暂无异动事件'}</h2><p className="mt-2 text-xs text-muted">等待符合条件的后端证据，不生成演示行情。</p></div> : <section aria-label="实时异动流" className="space-y-3">{visible.map(event => <article id={`anomaly-${event.event_id}`} key={event.event_id} data-severity={event.severity} data-arrival={arrival.get(event.event_id)} className={`anomaly-card min-w-0 rounded-card border bg-surface p-4 sm:p-5 ${event.severity === 'high' ? 'border-amber-300/80' : event.severity === 'medium' ? 'border-amber-500/40' : 'border-border'}`}>
+    {!delivery.state ? <p className="p-8 text-center text-muted">正在恢复历史事件…</p> : !visible.length ? <div className="rounded-card border border-border bg-surface p-12 text-center"><Shield className="mx-auto mb-3 text-muted" /><h2>{rows.length ? '当前筛选下暂无事件' : '暂无异动事件'}</h2><p className="mt-2 text-xs text-muted">等待符合条件的后端证据，不生成演示行情。</p></div> : <section aria-label="实时异动流" className="space-y-3">{visible.map(event => <article id={`anomaly-${event.event_id}`} key={event.event_id} data-severity={event.severity} data-arrival={arrival.get(event.event_id)} className={`anomaly-card min-w-0 rounded-card border bg-surface p-4 sm:p-5 ${event.severity === 'high' ? 'border-amber-300/80' : event.severity === 'medium' ? 'border-amber-500/40' : 'border-border'}`}>
       <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><strong className="font-mono text-lg">{event.symbol}</strong><span className="text-xs text-muted">{event.market}</span><span className="rounded-btn bg-elevated px-2 py-1 text-xs">{SEVERITY_LABELS[event.severity]}</span><span className="text-xs text-secondary">{EVENT_STATUS[event.status]}</span></div><h2 className="mt-2 text-sm">{ANOMALY_TYPES[event.event_type]} · {event.direction === 'up' ? '↑ 向上' : '↓ 向下'}</h2></div><div className="text-right"><div className="font-mono text-2xl">{percent(event.change_pct)}</div><div className="text-xs text-muted">观测价 {event.observed_value}</div></div></div>
       <p className="mt-3 break-words text-xs text-secondary">{eventTime(event.detected_at)} · 窗口 {eventTime(event.window_start)} → {eventTime(event.window_end)} · {event.evidence.sample_count} 个证据样本</p>
       <div className="mt-4 flex flex-wrap gap-3"><button aria-expanded={open === event.event_id} onClick={() => setOpen(open === event.event_id ? null : event.event_id)} className="flex items-center gap-1 text-xs text-amber-200">{open === event.event_id ? <ChevronUp size={14} /> : <ChevronDown size={14} />}查看证据</button>{event.market === 'CN' && <button className="text-xs text-secondary" onClick={() => setPreview(event.symbol)}>查看个股</button>}</div>

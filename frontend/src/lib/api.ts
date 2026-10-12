@@ -27,7 +27,11 @@ export interface AnomalyHealth {
   state: string; observed_at?: string; checkpoint?: number | null; processed?: number
   diagnostics: { state: string; reason?: string | null; rule_id?: string; snapshot_id?: number }[]
   market_sessions?: Partial<Record<'CN' | 'HK' | 'US', { session_state: string; diagnostic_code?: string | null }>>
+  delivery?: { state: string; latest_sequence?: number; latest_event_detected_at?: string | null }
 }
+export interface AnomalyCursor { sequence: number; event_id: string | null }
+export interface AnomalyPage { rows: AnomalyEvent[]; next_before_id: number | null; resume_cursor?: AnomalyCursor }
+export interface AnomalyIncrement { rows: AnomalyEvent[]; next_cursor: AnomalyCursor; has_more: boolean; latest_sequence: number; latest_event_detected_at: string | null }
 
 export interface HKRow {
   symbol?: string
@@ -2316,7 +2320,8 @@ export const api = {
   usDashboard: (symbol?: string) => request<USDashboardResponse>(`/api/dashboard/us${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   hkDashboard: (symbol?: string) => request<HKDashboardResponse>(`/api/dashboard/hk${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   health: () => request<{ status: string; version: string; mode: string }>('/health'),
-  anomalyRecent: (before?: number) => request<{ rows: AnomalyEvent[]; next_before_id: number | null }>(`/api/intraday/anomalies/recent?limit=100${before ? `&before_id=${before}` : ''}`, { quiet: true }),
+  anomalyRecent: (before?: number) => request<AnomalyPage>(`/api/intraday/anomalies/recent?limit=100${before ? `&before_id=${before}` : ''}`, { quiet: true }),
+  anomalyIncremental: (cursor: AnomalyCursor) => request<AnomalyIncrement>(`/api/intraday/anomalies/incremental?after_id=${cursor.sequence}${cursor.event_id ? `&after_event_id=${encodeURIComponent(cursor.event_id)}` : ''}&limit=100`, { quiet: true }),
   anomalyHealth: () => request<AnomalyHealth>('/api/intraday/anomalies/health', { quiet: true }),
   anomalyEpisodes: (symbol: string) => request<{ rows: Record<string, unknown>[] }>(`/api/intraday/anomalies/episodes?symbol=${encodeURIComponent(symbol)}`, { quiet: true }),
 

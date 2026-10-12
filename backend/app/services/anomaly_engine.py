@@ -163,6 +163,10 @@ class ArchiveInput:
         return list(reversed(rows[:1000])), len(rows) > 1000
 
 
+class StaleAnomalyCursorError(ValueError):
+    """Cursor anchor no longer exists or belongs to a different archive."""
+
+
 class AnomalyStore:
     """Events, episodes and consumer cursor commit together in independent SQLite."""
 
@@ -206,8 +210,45 @@ class AnomalyStore:
                 return {"rows": [], "next_before_id": None}
             rows = db.execute("SELECT id,payload FROM anomaly_events" + where + " ORDER BY id DESC LIMIT ?", [*params, limit + 1]).fetchall()
         selected = rows[:limit]
-        return {"rows": [{"store_id": row[0], **json.loads(row[1])} for row in selected],
-                "next_before_id": selected[-1][0] if len(rows) > limit else None}
+        events = [{"store_id": row[0], **json.loads(row[1])} for row in selected]
+        return {"rows": events, "next_before_id": selected[-1][0] if len(rows) > limit else None,
+                "resume_cursor": {"sequence": events[0]["store_id"], "event_id": events[0]["event_id"]} if events else {"sequence": 0, "event_id": None}}
+
+    def incremental(self, after_id: int, after_event_id: str | None, limit=100) -> dict:
+        if type(after_id) is not int or after_id < 0 or type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("bounded positive sequence/limit required")
+        if bool(after_event_id) != bool(after_id):
+            raise ValueError("positive cursor requires event anchor")
+        empty = {"rows": [], "next_cursor": {"sequence": 0, "event_id": None}, "has_more": False,
+                 "latest_sequence": 0, "latest_event_detected_at": None}
+        if not self.path.exists():
+            if after_id:
+                raise StaleAnomalyCursorError("cursor_anchor_missing")
+            return empty
+        with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)) as db:
+            db.execute("BEGIN")  # One consistent view during concurrent event inserts.
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='anomaly_events'").fetchone():
+                if after_id:
+                    raise StaleAnomalyCursorError("cursor_anchor_missing")
+                return empty
+            if after_id:
+                anchor = db.execute("SELECT event_id FROM anomaly_events WHERE id=?", (after_id,)).fetchone()
+                if not anchor or anchor[0] != after_event_id:
+                    raise StaleAnomalyCursorError("cursor_anchor_missing_or_changed")
+            latest = db.execute("SELECT MAX(id),MAX(detected_at) FROM anomaly_events").fetchone()
+            rows = db.execute("SELECT id,payload FROM anomaly_events WHERE id>? ORDER BY id ASC LIMIT ?", (after_id, limit + 1)).fetchall()
+        selected = rows[:limit]
+        events = [{"store_id": row[0], **json.loads(row[1])} for row in selected]
+        return {"rows": events,
+                "next_cursor": {"sequence": events[-1]["store_id"], "event_id": events[-1]["event_id"]} if events else {"sequence": after_id, "event_id": after_event_id},
+                "has_more": len(rows) > limit,
+                "latest_sequence": latest[0] or 0,
+                "latest_event_detected_at": _time(latest[1]).isoformat() if latest[1] is not None else None}
+
+    def delivery_state(self) -> dict:
+        # No cursor validation is needed for a zero-position metadata read.
+        page = self.incremental(0, None, limit=1)
+        return {"latest_sequence": page["latest_sequence"], "latest_event_detected_at": page["latest_event_detected_at"]}
 
     def episodes(self, symbol: str, limit=100) -> list[dict]:
         if type(limit) is not int or not 1 <= limit <= 200:
@@ -403,7 +444,8 @@ class AnomalyEngine:
                                             "state": state, "reason": assessment.get("reason")})
                     checkpoint = row["id"]
                 db.execute("UPDATE anomaly_cursors SET last_id=? WHERE ruleset=?", (checkpoint, self.policy.version))
-            return {"processed": len(rows), "events": events, "diagnostics": diagnostics[-100:], "checkpoint": checkpoint}
+            return {"processed": len(rows), "events": events, "diagnostics": diagnostics[-100:], "checkpoint": checkpoint,
+                    "processed_by_market": {market: sum(row["market"] == market for row in rows) for market in ("CN", "HK", "US")}}
         except (sqlite3.Error, OSError, ValueError, InvalidOperation, OverflowError):
             return {"processed": 0, "events": [], "diagnostics": [{"state": "unknown", "reason": "anomaly_storage_or_input_unavailable"}], "checkpoint": None}
 

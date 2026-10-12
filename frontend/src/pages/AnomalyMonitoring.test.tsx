@@ -4,7 +4,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AnomalyMonitoring } from './AnomalyMonitoring'
-import { QK } from '@/lib/queryKeys'
 import type { AnomalyEvent, AnomalyHealth } from '@/lib/api'
 import { AttentionLedger, filterEvents, monitoringState } from '@/lib/anomalyPresentation'
 import { readFileSync } from 'node:fs'
@@ -12,18 +11,27 @@ import { readFileSync } from 'node:fs'
 const mock = vi.hoisted(() => ({ rows: [] as AnomalyEvent[], health: { state: 'observing', diagnostics: [], market_sessions: { US: { session_state: 'regular' } } } as AnomalyHealth, fail: false }))
 vi.mock('@/lib/api', () => ({ api: {
   anomalyRecent: async () => { if (mock.fail) throw new Error('offline'); return { rows: mock.rows, next_before_id: null } },
+  anomalyIncremental: async (cursor: { sequence: number; event_id: string | null }) => {
+    if (mock.fail) throw new Error('offline')
+    const rows = mock.rows.filter(row => row.store_id > cursor.sequence).sort((a, b) => a.store_id - b.store_id)
+    const last = rows.at(-1)
+    return { rows, next_cursor: last ? { sequence: last.store_id, event_id: last.event_id } : cursor, has_more: false,
+      latest_sequence: Math.max(cursor.sequence, ...mock.rows.map(row => row.store_id)), latest_event_detected_at: mock.rows[0]?.detected_at ?? null }
+  },
   anomalyHealth: async () => mock.health,
   anomalyEpisodes: async () => ({ rows: [] }),
 } }))
 vi.mock('@/components/StockPreviewDialog', () => ({ StockPreviewDialog: () => null }))
+let sequence = 0
 export function fixture(id = 'event-1', severity: AnomalyEvent['severity'] = 'low', status: AnomalyEvent['status'] = 'first_trigger'): AnomalyEvent {
   const snapshot = { snapshot_id: 1, price: '100', quote_timestamp: 1000, receive_timestamp: 1001, quality_state: 'unknown', warning_codes: ['volume_unknown'] }
-  return { store_id: 1, event_id: id, episode_id: 'episode-1', symbol: 'AAPL.US', market: 'US', event_type: 'rapid_price_move', direction: 'up', severity, status,
+  return { store_id: ++sequence, event_id: id, episode_id: 'episode-1', symbol: 'AAPL.US', market: 'US', event_type: 'rapid_price_move', direction: 'up', severity, status,
     detected_at: '2026-10-09T14:05:00Z', window_start: '2026-10-09T14:00:00Z', window_end: '2026-10-09T14:05:00Z', observed_value: '104.3', baseline_value: '100', change_value: '4.3', change_pct: '0.043', threshold: '0.02', rule_id: 'rapid_move_5m', rule_version: '1-test', source: 'longbridge_snapshot_archive',
     evidence: { current: snapshot, baseline: [snapshot], sample_count: 11, maximum_gap_ms: 30000, baseline_scope: 'timestamp_boundary', volume_used: false, volume_status: 'unsupported_unit_unverified', history_truncated: false, medium_multiple: '1.5', high_multiple: '2', trigger_multiple: '2.15' } }
 }
 let host: HTMLDivElement, root: Root, client: QueryClient
 beforeEach(() => {
+  sequence = 0
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   mock.rows = []; mock.fail = false; mock.health = { state: 'observing', diagnostics: [], market_sessions: { US: { session_state: 'regular' } } }
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -32,7 +40,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove() })
 async function settle() { for (let i = 0; i < 6; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }) }
 async function mount() { await act(async () => root.render(<QueryClientProvider client={client}><AnomalyMonitoring /></QueryClientProvider>)); await settle() }
-async function update(rows: AnomalyEvent[]) { mock.rows = rows; await act(async () => { await client.refetchQueries({ queryKey: QK.anomalyRecent() }) }); await settle() }
+async function update(rows: AnomalyEvent[]) { mock.rows = rows; await act(async () => { window.dispatchEvent(new Event('focus')) }); await settle() }
 async function click(text: string) { const button = [...host.querySelectorAll('button')].find(item => item.textContent?.includes(text) || item.getAttribute('aria-label') === text); expect(button).toBeTruthy(); await act(async () => button!.click()); await settle() }
 async function select(label: string, value: string) { const input = host.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!; await act(async () => { input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })) }); await settle() }
 
@@ -84,8 +92,7 @@ it('degraded and unknown health never masquerade as healthy', async () => {
 })
 it('API failure retains history and reports unavailable', async () => {
   mock.rows = [fixture()]; await mount(); mock.fail = true
-  client.setQueryDefaults(QK.anomalyRecent(), { retry: false })
-  await act(async () => { await client.refetchQueries({ queryKey: QK.anomalyRecent() }) }); await settle()
+  await act(async () => { window.dispatchEvent(new Event('focus')) }); await settle()
   expect(host.querySelector('[data-health="unavailable"]')).not.toBeNull(); expect(host.querySelectorAll('article')).toHaveLength(1)
 })
 it('ledger handles duplicates, initial restore and backend-only escalation', () => {
