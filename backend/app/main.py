@@ -358,6 +358,15 @@ async def _application_lifespan(app: FastAPI):
         extension_registry,
     )
 
+    # Observe committed archive rows off the quote/write threads; no SDK calls.
+    try:
+        from app.services.anomaly_worker import AnomalyWorker
+
+        app.state.anomaly_worker = AnomalyWorker(store.data_dir)
+        app.state.anomaly_worker.start()
+    except Exception:
+        logger.warning("异动观察初始化失败. 主应用与行情链路保持运行")
+
     try:
         yield
     finally:
@@ -381,6 +390,9 @@ async def _application_lifespan(app: FastAPI):
         qs = getattr(app.state, "quote_service", None)
         if qs:
             qs.stop()
+        anomaly_worker = getattr(app.state, "anomaly_worker", None)
+        if anomaly_worker:
+            anomaly_worker.close()
         dsvc = getattr(app.state, "depth_service", None)
         if dsvc:
             dsvc.stop_polling()
