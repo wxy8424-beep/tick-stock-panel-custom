@@ -74,6 +74,7 @@ class SnapshotRef(BaseModel):
 class EventEvidence(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     historical_context: dict | None = None
+    market_context: dict | None = None
     current: SnapshotRef
     baseline: tuple[SnapshotRef, ...]
     sample_count: int

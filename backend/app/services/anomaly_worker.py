@@ -24,6 +24,7 @@ class AnomalyWorker:
         self._processed_by_market = {market: 0 for market in ("CN", "HK", "US")}
         self._evaluations_by_market = {market: 0 for market in ("CN", "HK", "US")}
         self._history_worker = None
+        self._market_worker = None
         self._data_dir = data_dir
 
     def health(self) -> dict:
@@ -34,6 +35,7 @@ class AnomalyWorker:
                     "processed_by_market": dict(self._processed_by_market),
                     "evaluations_by_market": dict(self._evaluations_by_market),
                     "historical_enrichment": self._history_worker.health() if self._history_worker else {"state": "not_started"},
+                    "market_enrichment": self._market_worker.health() if self._market_worker else {"state": "not_started"},
                     "volatility_expansion": {"status": "unsupported", "reason": "snapshot_cadence_not_authoritative"},
                     "volume_spike": {"status": "unsupported", "reason": "longbridge_volume_unit_unverified"},
                     "rule_version": self.engine.policy.version}
@@ -74,6 +76,14 @@ class AnomalyWorker:
             self._history_worker.start()
         except Exception:
             logger.warning("历史上下文不可用. 原异动观察继续运行")
+        try:
+            from app.services.historical_enrichment import HistoricalEnrichmentWorker
+            from app.services.market_context import MarketContextService
+
+            self._market_worker = HistoricalEnrichmentWorker(self._data_dir, MarketContextService(self._data_dir))
+            self._market_worker.start()
+        except Exception:
+            logger.warning("市场上下文不可用. 原异动观察继续运行")
 
     def _run(self):
         while not self._stop.is_set():
@@ -84,6 +94,8 @@ class AnomalyWorker:
         self._stop.set()
         if self._history_worker is not None:
             self._history_worker.close()
+        if self._market_worker is not None:
+            self._market_worker.close()
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():

@@ -20,6 +20,7 @@ vi.mock('@/lib/api', () => ({ api: {
   },
   anomalyHealth: async () => mock.health,
   anomalyEpisodes: async () => ({ rows: [] }),
+  anomalyMarketContexts: async (ids: string[]) => ({ contexts: Object.fromEntries(ids.map(id => [id, { status: 'unknown', blocker: 'enrichment_pending' }])) }),
   anomalyHistoricalContext: async () => ({ status: 'unknown', blocker: 'enrichment_pending', atr14: null, move_atr_ratio: null }),
   anomalyHistoricalContexts: async (ids: string[]) => ({ contexts: Object.fromEntries(ids.map(id => [id, { status: 'unknown', blocker: 'enrichment_pending', atr14: null, move_atr_ratio: null }])) }),
 } }))

@@ -12,6 +12,11 @@ from app.services.historical_baseline import (
     enrich_response,
     unknown_context,
 )
+from app.services.market_context import (
+    MarketContextStore,
+    enrich_market_response,
+    unknown_market_context,
+)
 
 router = APIRouter(prefix="/api/intraday/anomalies", tags=["anomalies"])
 
@@ -35,7 +40,7 @@ def recent(request: Request, symbol: str | None = Query(None, max_length=128),
                            start_ms=int(start.timestamp() * 1000) if start else None,
                            end_ms=int(end.timestamp() * 1000) if end else None,
                            before_id=before_id, limit=limit) if store else {"rows": [], "next_before_id": None}
-        return enrich_response(store.path.parent.parent, page) if store else page
+        return enrich_market_response(store.path.parent.parent, enrich_response(store.path.parent.parent, page)) if store else page
     except ValueError:
         raise HTTPException(422, "无效的异动查询范围") from None
     except Exception:
@@ -58,7 +63,7 @@ def incremental(request: Request, after_id: int = Query(0, ge=0),
     if store is None:
         raise HTTPException(503, "异动事件存储未初始化")
     try:
-        return enrich_response(store.path.parent.parent, store.incremental(after_id, after_event_id, limit))
+        return enrich_market_response(store.path.parent.parent, enrich_response(store.path.parent.parent, store.incremental(after_id, after_event_id, limit)))
     except StaleAnomalyCursorError:
         raise HTTPException(409, "交付游标失效. 请刷新后重新读取历史. 不会自动跳过事件") from None
     except ValueError:
@@ -109,3 +114,15 @@ def health(request: Request):
     except Exception:
         result["delivery"] = {"state": "unavailable"}
     return result
+
+
+@router.get("/market-contexts")
+def market_contexts(request: Request, event_id: Annotated[list[str], Query(min_length=1, max_length=100)]):
+    if any(not value or len(value) > 64 for value in event_id):
+        raise HTTPException(422, "无效事件ID")
+    store = _store(request)
+    try:
+        values = MarketContextStore(store.path.parent.parent).read_many(event_id) if store else {}
+        return {"contexts": {key: values.get(key, unknown_market_context({"event_id": key})) for key in event_id}}
+    except Exception:
+        return {"contexts": {key: unknown_market_context({"event_id": key}, "market_context_storage_unavailable") for key in event_id}}

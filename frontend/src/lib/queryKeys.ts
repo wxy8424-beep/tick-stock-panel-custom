@@ -12,6 +12,7 @@ export const QK = {
   anomalyHealth: ['anomaly-health'] as const,
   anomalyHistoricalContext: (id: string) => ['anomaly-historical-context', id] as const,
   anomalyHistoricalContexts: (ids: string[]) => ['anomaly-historical-contexts', ...ids] as const,
+  anomalyMarketContexts: (ids: string[]) => ['anomaly-market-contexts', ...ids] as const,
   anomalyIncremental: (sequence: number, anchor: string | null) => ['anomaly-incremental', sequence, anchor] as const,
   anomalyEpisodes: (symbol: string) => ['anomaly-episodes', symbol] as const,
   // 全局 / 共享 (Layout 预取)

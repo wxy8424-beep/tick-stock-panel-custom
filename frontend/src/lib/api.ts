@@ -19,6 +19,14 @@ export interface AnomalySnapshot {
   snapshot_id: number; price: string; quote_timestamp: number; receive_timestamp: number
   quality_state: string; warning_codes: string[]
 }
+export interface MarketAnomalyContext {
+  event_id: string | null; market: string | null; benchmark_symbol: string | null; benchmark_name: string | null
+  status: string; blocker: string | null; benchmark_change_pct: string | null; stock_change_pct: string | null
+  relative_move_pct: string | null; direction_relation: string; context_class: string; observed_at: string
+  source: string | null; context_version: string; window_start?: string; window_end?: string
+  baseline_observation?: Record<string, unknown>; current_observation?: Record<string, unknown>
+  policy?: Record<string, unknown>; observations?: Record<string, unknown>[]
+}
 export interface AnomalyEvent {
   store_id: number; event_id: string; episode_id: string; symbol: string; market: 'CN' | 'HK' | 'US'
   event_type: 'rapid_price_move' | 'intraday_breakout' | 'volatility_expansion'
@@ -26,7 +34,7 @@ export interface AnomalyEvent {
   status: 'first_trigger' | 'sustained' | 'escalation'; detected_at: string
   window_start: string; window_end: string; observed_value: string; baseline_value: string
   change_value: string; change_pct: string; threshold: string; rule_id: string; rule_version: string; source: string
-  evidence: { historical_context?: HistoricalAnomalyContext | null; current: AnomalySnapshot; baseline: AnomalySnapshot[]; sample_count: number
+  evidence: { historical_context?: HistoricalAnomalyContext | null; market_context?: MarketAnomalyContext | null; current: AnomalySnapshot; baseline: AnomalySnapshot[]; sample_count: number
     maximum_gap_ms: number; baseline_scope: string; volume_used: false; volume_status: string
     history_truncated: boolean; medium_multiple: string; high_multiple: string; trigger_multiple: string }
 }
@@ -2332,6 +2340,7 @@ export const api = {
   anomalyHealth: () => request<AnomalyHealth>('/api/intraday/anomalies/health', { quiet: true }),
   anomalyHistoricalContext: (eventId: string) => request<HistoricalAnomalyContext>(`/api/intraday/anomalies/historical-context?event_id=${encodeURIComponent(eventId)}`, { quiet: true }),
   anomalyHistoricalContexts: (eventIds: string[]) => request<{ contexts: Record<string, HistoricalAnomalyContext> }>(`/api/intraday/anomalies/historical-contexts?${new URLSearchParams(eventIds.map(id => ['event_id', id]))}`, { quiet: true }),
+  anomalyMarketContexts: (eventIds: string[]) => request<{ contexts: Record<string, MarketAnomalyContext> }>(`/api/intraday/anomalies/market-contexts?${new URLSearchParams(eventIds.map(id => ['event_id', id]))}`, { quiet: true }),
   anomalyEpisodes: (symbol: string) => request<{ rows: Record<string, unknown>[] }>(`/api/intraday/anomalies/episodes?symbol=${encodeURIComponent(symbol)}`, { quiet: true }),
 
   // ===== Auth (访问认证) =====

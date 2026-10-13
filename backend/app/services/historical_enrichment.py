@@ -35,7 +35,7 @@ class HistoricalEnrichmentWorker:
                     evaluation_date = get_market_session(event["market"], datetime.fromtimestamp(timestamp / 1000, UTC)).local_datetime.date()
                     context = self.service.context(event, evaluation_date)
                 except Exception:
-                    context = unknown_context("historical_enrichment_failed")
+                    context = self.service.failure_context(event) if hasattr(self.service, "failure_context") else unknown_context("historical_enrichment_failed")
                 # Context and consumer cursor advance together; original event is never updated.
                 with closing(self.service.store.connect()) as db, db:
                     db.execute("INSERT OR REPLACE INTO contexts VALUES (?,?)", (event["event_id"], json.dumps(context, allow_nan=False)))
@@ -48,7 +48,7 @@ class HistoricalEnrichmentWorker:
 
     def start(self):
         if self._thread is None:
-            self._thread = threading.Thread(target=self._run, name="anomaly-history-enrichment", daemon=True)
+            self._thread = threading.Thread(target=self._run, name=getattr(self.service, "worker_name", "anomaly-history-enrichment"), daemon=True)
             self._thread.start()
 
     def _run(self):
