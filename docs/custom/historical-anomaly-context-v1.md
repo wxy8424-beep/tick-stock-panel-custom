@@ -41,7 +41,9 @@ no annual/daily conversion or new intraday formula is introduced.
 Baseline records atr14, reference_close, lookback_start/end, observations, as_of_date,
 source, adjustment_method, baseline_version, calculation engine/mode/period and all selected
 OHLC bars. Bars reproduce the shared factor output; move_absolute = abs(event.change_value)
-and move_atr_ratio = Decimal(move_absolute) / Decimal(str(shared ATR)). Factor computation
+and, only when price-scale compatibility is proven, move_atr_ratio would be
+Decimal(move_absolute) / Decimal(str(shared ATR)). Current events lack that proof;
+the ratio remains null with a blocker. Factor computation
 uses the existing Float64 implementation. JSON scalar metrics are strings; null stays null.
 as_of_date is evaluation D, baseline_as_of/lookback_end is the last actual selected bar.
 The baseline version must be bumped whenever lookback, calculation or validation changes;
@@ -62,15 +64,16 @@ and dates are retained, but a complete historical session-calendar audit is not 
 
 | Market | Source | Baseline methods | Default ratio path |
 | --- | --- | --- | --- |
-| CN | akshare.stock_zh_a_hist/eastmoney | none, akshare_qfq | none |
-| US | yfinance.Ticker.history/yahoo | yfinance_auto_adjust_false, yfinance_auto_adjust | auto_adjust_false |
+| CN | akshare.stock_zh_a_hist/eastmoney | none, akshare_qfq | null: price scale unverified |
+| US | yfinance.Ticker.history/yahoo | yfinance_auto_adjust_false, yfinance_auto_adjust | null: price scale unverified |
 | HK | no historical v1 provider | unsupported | null |
 
 Raw and adjusted fields are selected explicitly. They never overwrite each other. The two
 suppliers' adjustments are not declared equivalent. Yahoo auto_adjust=False is source-provided
 OHLC; it is **not** asserted to be guaranteed as-traded unadjusted history (e.g. split/revision
-semantics remain those of the historical provider). A raw-default ratio is contextual and
-inherits these source limitations, especially around corporate actions.
+semantics remain those of the historical provider). Default source mode is not proof that
+event movement and every historical bar have compatible scales. Even default-mode context
+returns unavailable/event_baseline_price_scale_unverified, retaining ATR evidence but no ratio.
 Adjusted-mode ATR can be computed and cached independently, but comparison to current
 realtime absolute movement is unsupported until price-scale compatibility is proven:
 adjusted_baseline_realtime_price_basis_unverified. No adjustment factor is fabricated.
@@ -114,3 +117,115 @@ Third-party history calls are not part of ordinary unit tests. This phase does n
 real-source baseline availability from mock success; it depends on installed optional historical
 SDKs, source access and sufficient compatible history. Existing missing ESLint remains unchanged.
 No news, AI, probability, percentile, adaptive thresholds, minute statistics or trading is added.
+
+## Live validation v1 (2026-10-13)
+
+Run explicitly from backend:
+
+```powershell
+uv run --frozen --extra historical python scripts/smoke_historical_baseline.py --evaluation-date 2026-10-12
+```
+
+The harness uses actual Historical Provider instances, expanding the source fetch end to D
+to test the baseline's independent cutoff. All cache and synthetic-event integration writes
+are confined to a temporary directory; production stores and credentials are not accessed.
+Harness unit tests mock the providers. Successful source results are `completed`/`partial`;
+the baseline previously checked `ok` and incorrectly rejected completed responses. This is
+corrected; baseline version v1.1 isolates older failed baseline caches. No production contexts
+or enrichment cursor are deleted/replayed by this stage.
+
+| Symbol | Source / adjustment | Eligible dates | Observations | ATR14 | Reference close | Result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 600519.SH | AKShare / none | unavailable | 0 | null | null | BLOCKED: network_error |
+| 300750.SZ | AKShare / none | unavailable | 0 | null | null | BLOCKED: network_error |
+| AAPL.US | yfinance / yfinance_auto_adjust_false | 2026-06-15 to 2026-10-09 | 82 | 6.7440372890710725 | 336.6400146484375 | PASS |
+| NVDA.US | yfinance / yfinance_auto_adjust_false | 2026-06-15 to 2026-10-09 | 82 | 5.678489381910391 | 229.27999877929688 | PASS |
+
+US sources returned D=2026-10-12 as well; both factor inputs excluded it. Dates were unique,
+sorted, strictly <D, OHLC valid, ATR/reference close finite and positive. The exact first/last
+OHLC samples and SHA256 cache key are printed by the harness. Each symbol used one provider
+fetch; the second baseline read was equal and cached. CN failure records were cached too,
+but explicitly labeled `successful_baseline_cached=false`, not successful source validation.
+
+The service's existing `as_of_date` is the **evaluation date D**. The actual evidence cutoff
+is `lookback_end`/`baseline_as_of`; the harness calls this `prior_completed_as_of_date` and
+requires it <D. These two dates are deliberately not conflated.
+
+For each successful US baseline, event -> independent consumer -> side store -> read-only
+API overlay was verified as **FIXTURE CONTRACT VALIDATION**, not a real anomaly observation
+or browser run. The immutable fixture event bytes stayed unchanged. The frontend contract
+receives unavailable plus null ratio and displays the existing unavailable state.
+
+Price-scale compatibility remains unverified for both markets. No ratio is asserted usable,
+no source-equivalence or as-traded claim is added, and no threshold/severity changed.
+Source responses remain non-PIT: prior bars can be revised and corporate-action adjustments
+can change. Date gating suits live context enrichment but does not establish a frozen
+point-in-time research archive. No schema drift was observed; US diagnostics retain
+as_traded_raw_not_established, sdk_may_deduplicate_source_dates and volume_unit_unknown.
+At that initial validation, CN source access remained blocked; the later CN fallback
+acceptance below supersedes that availability snapshot. No network settings were changed.
+
+## CN Historical BaoStock fallback acceptance (2026-10-13)
+
+Primary: AKShare / Eastmoney (`akshare.stock_zh_a_hist/eastmoney`). Fallback: BaoStock
+0.9.4, pinned in the optional historical extra and uv.lock. The existing Historical Provider
+factory routes CN through the primary and fallback policy; no parallel baseline is added.
+Fallback scope is **CN Daily / adjustment=none only**. BaoStock requests daily frequency
+and adjustflag=3, validates returned code/adjustflag/trading status, and skips suspended bars.
+
+Fallback triggers are transport/source availability failures: connection/reset, timeout,
+TLS/DNS/proxy transport errors, or HTTP 429/502/503/504. Schema, parse/numeric, OHLC/semantic
+contract errors, empty responses, programming errors and requested qfq/adjusted mode do
+not trigger BaoStock. Failed fallback remains historical unavailable. Actual source is
+retained in normalized bars, baseline, cached provider diagnostics and primary/fallback
+attempts. Baseline version **historical-baseline-v1.2** isolates prior cached results.
+
+Two separate validations were performed at evaluation D=2026-10-12:
+
+- **NATURAL PRIMARY PATH: AKShare PASS / fallback not triggered.** Both symbols completed
+  through the normal factory/provider/baseline path, with one primary read and zero BaoStock
+  calls. AKShare had recovered since the earlier upstream_reset diagnostic.
+- **INJECTED FALLBACK VALIDATION: injected AKShare upstream_reset → real BaoStock PASS.**
+  Only a temporary acceptance harness replaced the primary instance's read with a
+  ConnectionError(RemoteDisconnected). The normal fallback policy and real, unmocked BaoStock
+  network query then fed the unified Historical Provider contract, baseline and shared ATR14.
+  Harness provenance explicitly labels primary_failure_class=injected_upstream_reset,
+  fallback_source=baostock, fallback_data=real; provider diagnostics retain upstream_reset,
+  primary_attempt, fallback_attempt=completed and fallback_used scope CN_daily_none.
+  No fault injection was added to production provider logic, configuration or default smoke.
+
+| Symbol | Final injected source / adjustment | Fetched / eligible | Eligible dates | ATR14 | Reference close |
+| --- | --- | --- | --- | --- | --- |
+| 600519.SH | baostock / none | 79 / 78 | 2026-06-15 to 2026-10-09 | 20.288266194303787 | 1263.0 |
+| 300750.SZ | baostock / none | 79 / 78 | 2026-06-15 to 2026-10-09 | 10.165668216611294 | 297.75 |
+
+Both sources returned the evaluation-date bar; it was excluded before factor computation.
+Eligible dates were ordered, unique and strictly <D, OHLC valid, and ATR/reference close
+finite and positive. In each independently isolated scenario, first cache read was a miss,
+second a hit with identical results, one provider call and no repeated primary/fallback
+fetch. Evidence cutoff/baseline_as_of=2026-10-09<D; service.as_of_date retains its existing
+evaluation-date meaning (2026-10-12). Fixture event→worker→side store→read-only API overlay
+also passed, with immutable event bytes and no production anomaly inserted.
+
+BaoStock fallback 已通过故障注入 + 真实备用源端到端验证；尚未再次观察到生产环境中的自然 AKShare failure → BaoStock fallback。
+
+Source-level PIT remains unresolved: date filtering does not prove source vintage, and
+history can be revised or affected by corporate actions. AKShare and BaoStock are not
+asserted equivalent or guaranteed as-traded. The volume contract is not expanded:
+BaoStock volume remains null/unknown. Longbridge realtime versus historical price-scale
+compatibility is an independent, unverified gate; move_atr_ratio remains null with
+event_baseline_price_scale_unverified. Matching observed prices is not proof. qfq semantics,
+anomaly thresholds/severity and production volume behavior are unchanged.
+
+Final checks: targeted provider/baseline/harness tests **92 passed**; after replacing two
+new-test percent-format expressions with f-strings for Ruff, affected BaoStock tests
+**20 passed**. Ruff on all changed/new Python files and git diff --check passed. The ten
+candidate files were reviewed for credentials and runtime artifacts; none were found.
+pyproject/uv.lock retain AKShare 1.19.1, add only BaoStock 0.9.4 to historical, and retain
+yfinance 1.7.0. No frontend source changed, so frontend full/build was not repeated.
+
+Backend full suite: **3356 passed / 6 skipped / 0 failed**, 217 existing warnings,
+178.65 seconds, outside the filesystem sandbox. The initial sandbox run was
+3348 passed / 6 skipped / 8 failed: Windows open-file inspection/hard-link access denial
+and one worker exit exception. The unchanged full suite passed outside the sandbox;
+no unrelated test or production workaround was introduced.

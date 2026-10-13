@@ -46,7 +46,7 @@ class Provider:
         if self.fail:
             raise RuntimeError("private upstream authorization text")
         market = "CN" if symbol.endswith(".SH") else "US"
-        return HistoricalDailyResult(symbol, market, mode, SOURCES[market], self.chosen if self.chosen is not None else frame(symbol, market), "ok", ())
+        return HistoricalDailyResult(symbol, market, mode, SOURCES[market], self.chosen if self.chosen is not None else frame(symbol, market), "completed", ())
 
 
 def service(tmp_path, provider=None, engine=None, version="test-v1"):
@@ -97,11 +97,13 @@ def test_hk_unsupported_never_calls_provider(tmp_path):
     assert result["move_atr_ratio"] is None and provider.calls == []
 
 
-def test_ratio_is_absolute_and_recomputable(tmp_path):
+@pytest.mark.parametrize("symbol,market", [("AAPL.US", "US"), ("600519.SH", "CN")])
+def test_default_method_does_not_prove_event_price_scale(tmp_path, symbol, market):
     baseline, _ = service(tmp_path)
-    result = baseline.context({"symbol": "AAPL.US", "market": "US", "change_value": "-4.1"}, D)
-    assert result["status"] == "available" and result["move_absolute"] == "4.1"
-    assert float(result["move_atr_ratio"]) == pytest.approx(4.1 / float(result["atr14"]))
+    result = baseline.context({"symbol": symbol, "market": market, "change_value": "-4.1"}, D)
+    assert result["status"] == "unavailable" and result["move_absolute"] == "4.1"
+    assert result["atr14"] is not None and result["move_atr_ratio"] is None
+    assert result["blocker"] == "event_baseline_price_scale_unverified"
 
 
 def test_cache_survives_restart_and_isolates_symbol_date_mode_version(tmp_path):

@@ -88,7 +88,33 @@ def _failure(exc: Exception) -> str:
         return "network_error"
     if "ratelimit" in name:
         return "rate_limited"
+    if name == "httperror" and getattr(getattr(exc, "response", None), "status_code", None) in {429, 502, 503, 504}:
+        return "http_unavailable"
     return "source_api_error"
+
+
+def _transport_classification(exc: Exception) -> str:
+    """Fixed evidence categories, never exception text or response bodies."""
+    pending, seen, names = [exc], set(), set()
+    while pending:
+        item = pending.pop()
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        names.add(type(item).__name__.lower())
+        pending.extend(value for value in (item.__cause__, item.__context__, getattr(item, "reason", None), *item.args)
+                       if isinstance(value, BaseException))
+    if names & {"remotedisconnected", "connectionreseterror"}:
+        return "upstream_reset"
+    if names & {"gaierror", "nameresolutionerror"}:
+        return "dns_error"
+    if any("ssl" in name for name in names):
+        return "tls_error"
+    if any("timeout" in name for name in names):
+        return "timeout"
+    if "httperror" in names:
+        return "http_unavailable"
+    return "connect_error" if any("connection" in name or "proxy" in name for name in names) else "unknown_network_error"
 
 
 def _normalize(frame, market: str, symbol: str, start: date, end: date, *,
@@ -211,7 +237,11 @@ class _HistoricalProvider:
             except Exception as exc:
                 if adjusted:
                     adjusted_rows = {}
-                diagnostics.append({"code": _failure(exc), "mode": mode})
+                code = _failure(exc)
+                diagnostic = {"code": code, "mode": mode}
+                if code in {"network_error", "network_timeout", "http_unavailable"}:
+                    diagnostic["classification"] = _transport_classification(exc)
+                diagnostics.append(diagnostic)
             if not adjusted and not raw:
                 return result([], "empty" if diagnostics[-1]["code"] == "empty_response" else "unavailable")
         fetched = datetime.now(UTC)
@@ -235,7 +265,7 @@ class _HistoricalProvider:
                          "source_adjusted_close": values.get("source_adjusted_close"),
                          "adjustment_method": self.raw_method,
                          "adjusted_adjustment_method": self.adjusted_method if day in adjusted_rows else None,
-                         "volume": values["volume"], "volume_unit": self.volume_unit,
+                         "volume": values.get("volume"), "volume_unit": self.volume_unit,
                          "currency": currency, "source": self.source, "fetched_at": fetched,
                          "observed_at": None, "dividend": values.get("dividend"), "split": values.get("split")})
         # Fetch timing is transport metadata, not a claimed provider observation.
@@ -317,7 +347,8 @@ class YFinanceDailyProvider(_HistoricalProvider):
 def get_historical_provider(market: str) -> HistoricalDailyProvider:
     """Explicit research factory, not the production registry/get_provider."""
     if market == "CN":
-        return AKShareDailyProvider()
+        from app.data_providers.baostock_daily import CNHistoricalProvider
+        return CNHistoricalProvider()
     if market == "US":
         return YFinanceDailyProvider()
     raise ValueError("historical v1 supports CN/US only")

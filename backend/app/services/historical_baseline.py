@@ -20,7 +20,7 @@ METHODS = {"CN": {"none": "raw", "akshare_qfq": "adjusted"},
            "US": {"yfinance_auto_adjust_false": "raw", "yfinance_auto_adjust": "adjusted"}}
 SOURCES = {"CN": "akshare.stock_zh_a_hist/eastmoney", "US": "yfinance.Ticker.history/yahoo"}
 DEFAULT_METHOD = {"CN": "none", "US": "yfinance_auto_adjust_false"}
-BASELINE_VERSION = "historical-baseline-v1"
+BASELINE_VERSION = "historical-baseline-v1.2"
 
 
 class HistoricalContextStore:
@@ -106,7 +106,8 @@ class HistoricalBaselineService:
         try:
             start, end = evaluation_date - timedelta(days=120), evaluation_date - timedelta(days=1)
             supplied = self.provider_factory(market).fetch_daily(symbol, start, end, METHODS[market][method])
-            if supplied.status not in {"ok", "partial"} or supplied.frame.is_empty():
+            result.update(source=supplied.source, provider_diagnostics=[dict(item) for item in supplied.diagnostics])
+            if supplied.status not in {"completed", "partial"} or supplied.frame.is_empty():
                 result.update(status="unavailable", blocker="historical_provider_empty_or_unavailable")
             else:
                 result = self._calculate(result, supplied, start, evaluation_date, method)
@@ -119,8 +120,12 @@ class HistoricalBaselineService:
         return result
 
     def _calculate(self, result, supplied, start, evaluation_date, method):
-        if supplied.symbol != result["symbol"] or supplied.market != result["market"] or supplied.source != result["source"]:
+        allowed_sources = {SOURCES[result["market"]]}
+        if result["market"] == "CN" and method == "none":
+            allowed_sources.add("baostock")
+        if supplied.symbol != result["symbol"] or supplied.market != result["market"] or supplied.source not in allowed_sources:
             return {**result, "status": "unavailable", "blocker": "historical_identity_conflict"}
+        result.update(source=supplied.source, provider_diagnostics=[dict(item) for item in supplied.diagnostics])
         frame = supplied.frame
         if frame.schema.get("trading_date") != pl.Date:
             return {**result, "status": "unknown", "blocker": "historical_date_schema_unknown"}
@@ -168,7 +173,10 @@ class HistoricalBaselineService:
                 if baseline["adjustment_method"] not in DEFAULT_METHOD.values():
                     context.update(status="unsupported", blocker="adjusted_baseline_realtime_price_basis_unverified")
                 else:
-                    context["move_atr_ratio"] = str(move / Decimal(baseline["atr14"]))
+                    # Default source mode alone is not proof that event prices and
+                    # every historical bar share a scale (e.g. intervening splits).
+                    # Existing events carry no verifiable scale provenance.
+                    context.update(status="unavailable", blocker="event_baseline_price_scale_unverified")
         except Exception:
             context.update(status="unknown", blocker="event_move_invalid", move_atr_ratio=None)
         return context

@@ -72,6 +72,7 @@ dev = [
 ]
 historical = [
     "akshare==1.19.1",
+    "baostock==0.9.4",
     "yfinance==1.7.0",
 ]
 
