@@ -20,6 +20,7 @@ vi.mock('@/lib/api', () => ({ api: {
   },
   anomalyHealth: async () => mock.health,
   anomalyEpisodes: async () => ({ rows: [] }),
+  anomalyIntelligence: async (event_id: string) => ({ event_id, status: 'BLOCKED', policy: null, historical: { status: 'UNAVAILABLE' }, market: { status: 'UNAVAILABLE' }, factor: { status: 'UNAVAILABLE' }, blockers: ['no_applicable_evidence_policy'], generated_at: null, version: 'anomaly-intelligence-v1' }),
   anomalyMarketContexts: async (ids: string[]) => ({ contexts: Object.fromEntries(ids.map(id => [id, { status: 'unknown', blocker: 'enrichment_pending' }])) }),
   anomalyHistoricalContext: async () => ({ status: 'unknown', blocker: 'enrichment_pending', atr14: null, move_atr_ratio: null }),
   anomalyHistoricalContexts: async (ids: string[]) => ({ contexts: Object.fromEntries(ids.map(id => [id, { status: 'unknown', blocker: 'enrichment_pending', atr14: null, move_atr_ratio: null }])) }),

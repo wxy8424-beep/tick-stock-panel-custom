@@ -25,6 +25,7 @@ class AnomalyWorker:
         self._evaluations_by_market = {market: 0 for market in ("CN", "HK", "US")}
         self._history_worker = None
         self._market_worker = None
+        self._intelligence_worker = None
         self._data_dir = data_dir
 
     def health(self) -> dict:
@@ -84,6 +85,13 @@ class AnomalyWorker:
             self._market_worker.start()
         except Exception:
             logger.warning("市场上下文不可用. 原异动观察继续运行")
+        try:
+            from app.services.anomaly_intelligence_worker import AnomalyIntelligenceWorker
+
+            self._intelligence_worker = AnomalyIntelligenceWorker(self._data_dir)
+            self._intelligence_worker.start()
+        except Exception:
+            logger.warning("Intelligence证据聚合不可用. 原异动观察继续运行")
 
     def _run(self):
         while not self._stop.is_set():
@@ -96,6 +104,8 @@ class AnomalyWorker:
             self._history_worker.close()
         if self._market_worker is not None:
             self._market_worker.close()
+        if self._intelligence_worker is not None:
+            self._intelligence_worker.close()
         if self._thread is not None:
             self._thread.join(timeout=5)
             if self._thread.is_alive():

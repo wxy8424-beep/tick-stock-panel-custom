@@ -11,6 +11,7 @@ export const QK = {
   anomalyRecent: (before?: number) => ['anomaly-recent', before ?? 'latest'] as const,
   anomalyHealth: ['anomaly-health'] as const,
   anomalyHistoricalContext: (id: string) => ['anomaly-historical-context', id] as const,
+  anomalyIntelligence: (id: string) => ['anomaly-intelligence', id] as const,
   anomalyHistoricalContexts: (ids: string[]) => ['anomaly-historical-contexts', ...ids] as const,
   anomalyMarketContexts: (ids: string[]) => ['anomaly-market-contexts', ...ids] as const,
   anomalyIncremental: (sequence: number, anchor: string | null) => ['anomaly-incremental', sequence, anchor] as const,

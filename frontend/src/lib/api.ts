@@ -8,6 +8,19 @@ import type { CalendarCoverage, MarketSessionInfo } from '@/lib/marketSession'
 
 const BASE = ''
 
+export type IntelligenceStatus = 'READY' | 'PARTIAL' | 'UNAVAILABLE' | 'BLOCKED'
+export interface IntelligenceSection {
+  status: IntelligenceStatus; blocker?: string | null; source_status?: string | null; source_blocker?: string | null
+  atr14?: string | null; reference_close?: string | null; pit_capable?: boolean | null; move_atr_ratio?: string | null
+  benchmark_symbol?: string | null; benchmark_change_pct?: string | null; relative_move_pct?: string | null
+  context_class?: string | null; snapshot_id?: string | null; definition_id?: string | null; total_score?: number | null
+}
+export interface AnomalyIntelligence {
+  event_id: string; status: IntelligenceStatus; policy: { policy_id: string | null; version: string | null } | null
+  historical: IntelligenceSection; market: IntelligenceSection; factor: IntelligenceSection
+  blockers: string[]; generated_at: string | null; version: string
+}
+
 export interface HistoricalAnomalyContext {
   status: string; blocker: string | null; atr14: string | null; reference_close?: string | null
   move_absolute: string | null; move_atr_ratio: string | null; baseline_as_of: string | null
@@ -2339,6 +2352,7 @@ export const api = {
   anomalyIncremental: (cursor: AnomalyCursor) => request<AnomalyIncrement>(`/api/intraday/anomalies/incremental?after_id=${cursor.sequence}${cursor.event_id ? `&after_event_id=${encodeURIComponent(cursor.event_id)}` : ''}&limit=100`, { quiet: true }),
   anomalyHealth: () => request<AnomalyHealth>('/api/intraday/anomalies/health', { quiet: true }),
   anomalyHistoricalContext: (eventId: string) => request<HistoricalAnomalyContext>(`/api/intraday/anomalies/historical-context?event_id=${encodeURIComponent(eventId)}`, { quiet: true }),
+  anomalyIntelligence: (eventId: string) => request<AnomalyIntelligence>(`/api/anomalies/${encodeURIComponent(eventId)}/intelligence`, { quiet: true }),
   anomalyHistoricalContexts: (eventIds: string[]) => request<{ contexts: Record<string, HistoricalAnomalyContext> }>(`/api/intraday/anomalies/historical-contexts?${new URLSearchParams(eventIds.map(id => ['event_id', id]))}`, { quiet: true }),
   anomalyMarketContexts: (eventIds: string[]) => request<{ contexts: Record<string, MarketAnomalyContext> }>(`/api/intraday/anomalies/market-contexts?${new URLSearchParams(eventIds.map(id => ['event_id', id]))}`, { quiet: true }),
   anomalyEpisodes: (symbol: string) => request<{ rows: Record<string, unknown>[] }>(`/api/intraday/anomalies/episodes?symbol=${encodeURIComponent(symbol)}`, { quiet: true }),

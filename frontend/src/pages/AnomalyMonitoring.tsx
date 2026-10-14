@@ -9,6 +9,7 @@ import { marketSessionLabel } from '@/lib/marketSession'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { HistoricalContextEvidence, HistoricalContextSummary } from '@/components/anomalies/HistoricalContext'
 import { MarketContextEvidence, MarketContextSummary } from '@/components/anomalies/MarketContext'
+import { IntelligenceContext } from '@/components/anomalies/IntelligenceContext'
 import './AnomalyMonitoring.css'
 
 function Evidence({ event }: { event: AnomalyEvent }) {
@@ -33,6 +34,7 @@ function Evidence({ event }: { event: AnomalyEvent }) {
     </dl>
     <HistoricalContextEvidence context={historicalContext} />
     <MarketContextEvidence context={marketContext} />
+    <IntelligenceContext eventId={event.event_id} />
     <details className="mt-4"><summary className="cursor-pointer">完整后端事件证据（原始字段）</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-all rounded-card bg-base p-3">{JSON.stringify({ ...event, evidence: { ...event.evidence, historical_context: historicalContext, market_context: marketContext } }, null, 2)}</pre></details>
   </div>
 }
