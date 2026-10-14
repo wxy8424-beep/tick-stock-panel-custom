@@ -113,3 +113,24 @@ price-scale compatibility and evidence refresh remain separate work. No new
 financial factual claims or provider entitlement claims follow from this merge.
 No external source code was copied beyond the upstream MIT-licensed merge;
 the upstream LICENSE and history remain present.
+
+## Live source-runtime cutover (2026-10-14)
+
+After validation, the original main worktree was fast-forwarded to the tested
+merge. Original runtime data was retained. A Windows CurrentUser DPAPI-encrypted
+backup containing 1006 files was created with the backend stopped, then
+decrypted in memory and ZIP CRC checked. It includes original runtime state and
+local environment configuration; regenerable logs, verification fixtures,
+matrix cache and staging were excluded. No backup content enters Git.
+
+The original environment was synchronized offline to the lock file. Its four
+pre-existing untracked diagnostic dependencies (bs4 0.0.2, simplejson 4.2.0,
+Tushare 1.4.29 and websocket-client 1.9.2) were restored from cache after uv
+sync removed unmanaged packages. No authenticated vendor probe was made.
+
+The backend was restarted at the existing loopback port 3018, using its original
+data directory and the existing three-symbol diagnostic trace scope. Live
+read-only checks returned health HTTP 200/version 0.3.7, QuoteService running,
+anomaly worker observing, and HTTP 200 frontend bytes exactly matching the
+validated build index. This verifies the source runtime, not a separately
+packaged desktop installer, complete UI interaction or benchmark archive flow.
