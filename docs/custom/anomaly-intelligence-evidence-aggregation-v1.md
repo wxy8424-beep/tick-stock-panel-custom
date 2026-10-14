@@ -55,7 +55,9 @@ Policy/execution conflict or required evidence BLOCKED -> overall BLOCKED.
 All selected required/optional sections READY -> READY.
 At least one READY/PARTIAL section with remaining missing/partial evidence -> PARTIAL.
 No usable evidence with clear selection -> UNAVAILABLE. Required missing evidence never becomes READY.
-Unselected evidence is marked not_selected_by_policy. Missing context/value is never filled with zero.
+Unselected historical/market evidence is marked not_selected_by_policy. A policy-disabled factor
+section is NOT_SELECTED with no blocker and null score; it is excluded from overall state evaluation.
+Missing enabled context/value is never filled with zero.
 
 ## Persistence / consumer
 
@@ -100,3 +102,11 @@ the full success path remains isolated fixture contract validation only.
 - First-collected view is frozen; later evidence requires an explicit future versioned-refresh design.
 - Existing default-thread backtest worker timing open-loop is not fixed by this layer; constrained
   POLARS_MAX_THREADS=1 full regression, if needed, is a test environment condition only.
+
+## Factor disabled compatibility
+
+Disabled by policy differs from enabled-but-UNAVAILABLE and enabled-with-invalid-contract BLOCKED.
+NOT_SELECTED is a section state only; overall states stay READY/PARTIAL/UNAVAILABLE/BLOCKED.
+No Snapshot query, missing-snapshot blocker or synthetic score is generated for disabled factors.
+The API and UI preserve that distinction (Disabled by policy); old frozen Intelligence records
+are not rewritten. This contract update does not resume Production Readiness or install policies.

@@ -36,11 +36,11 @@ class EvidencePolicy(PolicyModel):
     event_time_source: Literal["window_end"]
     knowledge_cutoff_source: Literal["detected_at"]
     trading_calendar: str = Field(min_length=1)
-    definition_id: str = Field(min_length=1)
-    universe_id: str = Field(min_length=1)
+    definition_id: str | None = Field(min_length=1)
+    universe_id: str | None = Field(min_length=1)
     snapshot_date_rule: Literal["previous_completed_trading_day"]
-    normalization_version: str = Field(min_length=1)
-    required_factor_versions: tuple[FactorVersion, ...] = Field(min_length=1)
+    normalization_version: str | None = Field(min_length=1)
+    required_factor_versions: tuple[FactorVersion, ...]
     allow_atr_display: bool = Field(strict=True)
     allow_move_atr_ratio: bool = Field(strict=True)
     require_price_scale_verified: bool = Field(strict=True)
@@ -48,6 +48,10 @@ class EvidencePolicy(PolicyModel):
     benchmark_selection_mode: Literal["existing_event_market_context_no_substitution"]
     required_evidence: tuple[EvidenceKind, ...]
     optional_evidence: tuple[EvidenceKind, ...]
+
+    @property
+    def factor_enabled(self) -> bool:
+        return "factors" in self.required_evidence + self.optional_evidence
 
     @model_validator(mode="after")
     def validate_contract(self):
@@ -63,6 +67,9 @@ class EvidencePolicy(PolicyModel):
         evidence = set(self.required_evidence + self.optional_evidence)
         if not evidence:
             raise ValueError("evidence_requirements_missing")
+        if self.factor_enabled and (self.definition_id is None or self.universe_id is None
+                                    or self.normalization_version is None or not self.required_factor_versions):
+            raise ValueError("enabled_factor_metadata_required")
         if self.allow_move_atr_ratio and (not self.require_price_scale_verified or not self.allow_atr_display):
             raise ValueError("ratio_requires_verified_price_scale_and_atr")
         if (self.allow_atr_display or self.allow_move_atr_ratio) and "historical" not in evidence:
@@ -72,7 +79,8 @@ class EvidencePolicy(PolicyModel):
         labels = (self.policy_id, self.version, self.trading_calendar, self.definition_id,
                   self.universe_id, self.normalization_version,
                   *(item.version for item in self.required_factor_versions))
-        if any(value.strip().lower() in {"", "unknown", "latest", "default", "unverified"} for value in labels):
+        if any(value.strip().lower() in {"", "unknown", "latest", "default", "unverified", "*"}
+               for value in labels if value is not None):
             raise ValueError("explicit_metadata_required")
         return self
 

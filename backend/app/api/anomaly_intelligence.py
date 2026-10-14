@@ -27,8 +27,12 @@ def intelligence(request: Request, event_id: str = Path(pattern=r"^[a-f0-9]{64}$
             state = "BLOCKED"
             blocker = "no_applicable_evidence_policy" if resolved["blocker"] == "no_matching_policy" else resolved["blocker"]
         section = {"status": "UNAVAILABLE", "blocker": "intelligence_not_collected"}
+        factor = section
+        if resolved["status"] == "READY" and "factors" not in (
+                resolved["selection_rules"]["required_evidence"] + resolved["selection_rules"]["optional_evidence"]):
+            factor = {"status": "NOT_SELECTED", "blocker": None, "total_score": None}
         return {"event_id": event_id, "status": state, "policy": None, "historical": section,
-                "market": section, "factor": section, "blockers": [blocker], "generated_at": None,
+                "market": section, "factor": factor, "blockers": [blocker], "generated_at": None,
                 "version": "anomaly-intelligence-v1"}
     except HTTPException:
         raise

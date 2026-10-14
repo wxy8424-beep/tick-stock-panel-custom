@@ -304,3 +304,49 @@ def test_consumer_lifecycle_independent(tmp_path, monkeypatch):
     assert worker._intelligence_worker._thread.is_alive()
     worker.close()
     assert not worker._intelligence_worker._thread.is_alive()
+
+
+@pytest.mark.parametrize("retrospective,expected", [(False, "READY"), (True, "PARTIAL")])
+def test_disabled_factor_not_queried_or_blocked(tmp_path, monkeypatch, retrospective, expected):
+    from tests.test_evidence_policy import disabled_policy
+
+    collector, event, history, *_ = setup(tmp_path, monkeypatch)
+    # Only isolated fixture policy data is replaced, never production configuration.
+    with sqlite3.connect(collector.policies.store.path) as db:
+        db.execute("DELETE FROM policies")
+    chosen = disabled_policy()
+    EvidencePolicyStore(tmp_path).save(chosen)
+    execution = EvidenceExecutionResolver(collector.execution.calendars)
+    execution.register(PolicyExecutionBinding(policy_id=chosen.policy_id, policy_version=chosen.version,
+        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", factors=()))
+    collector.execution = execution
+    monkeypatch.setattr(collector.factors, "query", lambda *a, **kw: pytest.fail("disabled must not query snapshots"))
+    if retrospective:
+        history.update(pit_capable=False, blocker="event_baseline_price_scale_unverified")
+        set_context(collector.history, event, history)
+    record = collector.collect(event)
+    assert record.status == expected
+    assert record.factor.status == "NOT_SELECTED" and record.factor.blocker is None
+    assert record.factor.to_dict()["total_score"] is None
+    assert not any("factor" in code for code in record.blockers)
+    store = AnomalyIntelligenceStore(tmp_path)
+    store.save(record)
+    assert store.get(event["event_id"]).factor.status == "NOT_SELECTED"
+
+
+def test_api_pending_disabled_factor_not_unavailable(tmp_path, monkeypatch):
+    from tests.test_evidence_policy import disabled_policy
+
+    _collector, event, *_ = setup(tmp_path, monkeypatch)
+    store = EvidencePolicyStore(tmp_path)
+    with sqlite3.connect(store.path) as db:
+        db.execute("DELETE FROM policies")
+    store.save(disabled_policy())
+    app = FastAPI()
+    app.state.repo = SimpleNamespace(store=SimpleNamespace(data_dir=tmp_path))
+    app.include_router(router)
+    with TestClient(app) as client:
+        response = client.get(f"/api/anomalies/{event['event_id']}/intelligence")
+    assert response.status_code == 200
+    assert response.json()["factor"] == {"status": "NOT_SELECTED", "blocker": None, "total_score": None}
+    assert not AnomalyIntelligenceStore(tmp_path).path.exists()

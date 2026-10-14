@@ -47,7 +47,7 @@ def finite(value, *, positive=False):
 
 
 class Evidence(PolicyModel):
-    status: State
+    status: Literal["READY", "PARTIAL", "UNAVAILABLE", "BLOCKED", "NOT_SELECTED"]
     blocker: str | None
     source_status: str | None
     source_blocker: str | None
@@ -266,7 +266,9 @@ class AnomalyEvidenceCollector:
                     if sections[name].blocker:
                         blockers.append(f"{name}:{sections[name].blocker}")
                 for name in sections.keys() - selected:
-                    sections[name] = evidence(blocker="not_selected_by_policy")
+                    sections[name] = (evidence("NOT_SELECTED", None, total_score=None, factor_score=None,
+                        snapshot_id=None, definition_id=None) if name == "factors"
+                        else evidence(blocker="not_selected_by_policy"))
                 states = [sections[name].status for name in selected]
                 if any(sections[name].status == "BLOCKED" for name in policy.required_evidence):
                     state = "BLOCKED"

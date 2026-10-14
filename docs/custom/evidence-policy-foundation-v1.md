@@ -14,8 +14,8 @@ must be supplied (including nullable `effective_to`). Nested collections are tup
 - Time rules: event_time_source=window_end; knowledge_cutoff_source=detected_at;
   explicitly supplied trading_calendar identifier/version; snapshot_date_rule=
   previous_completed_trading_day. These are instructions, not computed dates.
-- Factor selection: explicit definition_id, universe_id, normalization_version,
-  required_factor_versions (name/version pairs). No latest/default definition.
+- Factor selection when enabled: explicit definition_id, universe_id, normalization_version,
+  nonempty required_factor_versions (name/version pairs). No latest/default definition.
 - Historical permissions: allow_atr_display, allow_move_atr_ratio,
   require_price_scale_verified. Ratio permission requires ATR permission and scale verification.
 - Market: benchmark_required, benchmark_selection_mode=
@@ -63,3 +63,20 @@ needs explicit engine/registry compatibility and universe membership/version pol
 this foundation is not Anomaly Intelligence completion.
 
 Tests use temporary databases and explicit isolated fixture policies, not production configuration.
+
+## Factor branch selection (conditional contract)
+
+The sole switch is membership of `factors` in required_evidence or optional_evidence.
+There is no additional enabled boolean, no metadata-based inference and no change to policy
+serialization. All fields remain explicit, even nullable ones.
+
+- Disabled by policy: factors appears in neither selection list. definition_id/universe_id/
+  normalization_version may be null, required_factor_versions may be empty. No dummy data needed.
+- Enabled but unavailable: full valid configuration exists but no eligible snapshot is available.
+- Enabled and blocked: missing/invalid configuration is rejected; Resolver reports BLOCKED for
+  invalid persisted policies. Null/empty metadata never satisfies an enabled branch.
+
+Existing complete enabled policies parse and serialize unchanged. Legacy unused metadata in a
+disabled policy is preserved, not used to enable the factor branch. Execution requires empty
+factor bindings when disabled; unused old bindings must be explicitly corrected through a new
+immutable binding/policy version, never silently rewritten. Existing databases are not migrated.

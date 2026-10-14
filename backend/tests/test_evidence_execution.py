@@ -3,7 +3,7 @@ from datetime import date
 
 import pytest
 from pydantic import ValidationError
-from test_evidence_policy import policy
+from test_evidence_policy import disabled_policy, policy
 
 from app.services.evidence_execution import (
     EvidenceExecutionResolver,
@@ -34,6 +34,29 @@ def binding(**changes):
     return PolicyExecutionBinding.model_validate({"policy_id": "fixture-policy", "policy_version": "v1",
         "policy": policy(), "calendar_id": "fixture-calendar-v1", "calendar_version": "1",
         "factors": [factor()]} | changes)
+
+
+def test_disabled_factor_execution_skips_identity_resolution(monkeypatch):
+    from app.services import evidence_execution
+
+    calendars = TradingCalendarBindings()
+    calendars.register(calendar())
+    chosen = disabled_policy()
+    item = binding(policy=chosen, factors=[])
+    assert PolicyExecutionBinding.model_validate_json(item.model_dump_json()) == item
+    monkeypatch.setattr(evidence_execution, "get_engine_factor", lambda key: pytest.fail("disabled must not resolve factor"))
+    resolver = EvidenceExecutionResolver(calendars)
+    resolver.register(item)
+    result = resolver.resolve(chosen)
+    assert result["status"] == "READY" and result["factor_branch"] == "NOT_SELECTED"
+    assert result["factor_identity_binding"] == []
+
+
+def test_disabled_rejects_dummy_binding_enabled_rejects_empty_binding():
+    with pytest.raises(ValidationError):
+        binding(policy=disabled_policy(), factors=[factor()])
+    with pytest.raises(ValidationError):
+        binding(factors=[])
 
 
 def test_calendar_immutable_version_and_serialization():

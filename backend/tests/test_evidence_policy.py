@@ -1,4 +1,6 @@
 """Isolated policies are fixtures, not active production evidence configuration."""
+import json
+import sqlite3
 from copy import deepcopy
 
 import pytest
@@ -28,6 +30,58 @@ def policy(**changes):
 def event(**changes):
     return {"symbol": "AAPL.US", "market": "US", "event_type": "rapid_price_move",
             "detected_at": "2026-10-14T15:00:00Z", "evidence": {"unchanged": True}} | changes
+
+
+def disabled_policy(**changes):
+    return policy(**({"required_evidence": ["historical", "market"], "optional_evidence": [],
+        "definition_id": None, "universe_id": None, "normalization_version": None,
+        "required_factor_versions": []} | changes))
+
+
+def test_factor_disabled_roundtrip_and_resolution(tmp_path):
+    item = disabled_policy()
+    assert item.factor_enabled is False
+    assert EvidencePolicy.model_validate_json(item.model_dump_json()) == item
+    store = EvidencePolicyStore(tmp_path)
+    store.save(item)
+    result = EvidencePolicyResolver(store).resolve(event())
+    assert result["status"] == "READY"
+    assert result["selection_rules"]["definition_id"] is None
+    assert result["selection_rules"]["required_factor_versions"] == []
+
+
+@pytest.mark.parametrize("required,optional", [(["factors"], ["historical", "market"]),
+    (["historical", "market"], ["factors"])])
+@pytest.mark.parametrize("missing", ["definition_id", "universe_id", "normalization_version", "required_factor_versions"])
+def test_factor_enabled_missing_metadata_fails_closed(required, optional, missing):
+    with pytest.raises(ValidationError):
+        policy(required_evidence=required, optional_evidence=optional,
+               **{missing: [] if missing == "required_factor_versions" else None})
+
+
+def test_old_factor_enabled_serialization_unchanged():
+    item = policy()
+    assert item.factor_enabled is True
+    assert EvidencePolicy.model_validate_json(item.model_dump_json()).to_dict() == item.to_dict()
+
+
+def test_disabled_legacy_unused_metadata_does_not_enable_factors():
+    item = policy(required_evidence=["historical", "market"], optional_evidence=[])
+    assert item.factor_enabled is False
+    assert item.definition_id == "fixture-definition"
+
+
+@pytest.mark.parametrize("missing", ["definition_id", "universe_id", "normalization_version", "required_factor_versions"])
+def test_invalid_enabled_stored_policy_resolves_blocked(tmp_path, missing):
+    store = EvidencePolicyStore(tmp_path)
+    store.save(policy())
+    invalid = policy().to_dict()
+    invalid[missing] = [] if missing == "required_factor_versions" else None
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE policies SET payload=?", (json.dumps(invalid),))
+    result = EvidencePolicyResolver(store).resolve(event())
+    assert result["status"] == "BLOCKED"
+    assert result["blocker"] == "policy_store_unavailable_or_invalid"
 
 
 def test_serialization_and_nested_immutability():

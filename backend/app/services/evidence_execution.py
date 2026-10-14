@@ -113,7 +113,7 @@ class PolicyExecutionBinding(PolicyModel):
     policy: EvidencePolicy
     calendar_id: str = Field(min_length=1)
     calendar_version: str = Field(min_length=1)
-    factors: tuple[FactorIdentityContract, ...] = Field(min_length=1)
+    factors: tuple[FactorIdentityContract, ...]
 
     @model_validator(mode="after")
     def validate_policy_identity(self):
@@ -122,10 +122,13 @@ class PolicyExecutionBinding(PolicyModel):
         names = [item.registry_key for item in self.factors]
         if len(names) != len(set(names)):
             raise ValueError("ambiguous_factor_binding")
-        expected = {(item.name, item.version) for item in self.policy.required_factor_versions}
-        actual = {(item.registry_key, str(item.version)) for item in self.factors}
-        if expected != actual:
-            raise ValueError("policy_factor_identity_conflict")
+        if self.policy.factor_enabled:
+            expected = {(item.name, item.version) for item in self.policy.required_factor_versions}
+            actual = {(item.registry_key, str(item.version)) for item in self.factors}
+            if not self.factors or expected != actual:
+                raise ValueError("policy_factor_identity_conflict")
+        elif self.factors:
+            raise ValueError("disabled_factor_binding_must_be_empty")
         if self.calendar_id != self.policy.trading_calendar:
             raise ValueError("policy_calendar_identity_conflict")
         return self
@@ -157,10 +160,12 @@ class EvidenceExecutionResolver:
             return {"status": "BLOCKED", "blocker": "calendar_binding_missing"}
         # Definition checks only; never execute Engine.compute or collect snapshots.
         try:
-            for identity in binding.factors:
-                FactorIdentityContract.model_validate_json(identity.model_dump_json())
+            if policy.factor_enabled:
+                for identity in binding.factors:
+                    FactorIdentityContract.model_validate_json(identity.model_dump_json())
         except ValueError:
             return {"status": "BLOCKED", "blocker": "factor_registry_version_unavailable"}
         return {"status": "READY", "blocker": None, "policy_id": policy.policy_id,
                 "policy_version": policy.version, "calendar_binding": calendar.model_dump(mode="json"),
+                "factor_branch": "ENABLED" if policy.factor_enabled else "NOT_SELECTED",
                 "factor_identity_binding": [item.model_dump(mode="json") for item in binding.factors]}

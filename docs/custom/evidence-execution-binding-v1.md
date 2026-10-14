@@ -37,7 +37,7 @@ PolicyExecutionBinding pins the full frozen policy, exact policy_id/version, exp
 ID/version, and factor identities. policy.required_factor_versions.name means the exact Engine
 registry key, not an output column. Its version string must equal the canonical decimal integer
 registry version (for example `1`, not `v1`). Calendar ID must equal policy.trading_calendar.
-Factor requirement sets must match exactly and each family has one unambiguous binding.
+When enabled, factor requirement sets must match exactly and each family has one unambiguous binding.
 The policy already pins definition_id/universe_id/normalization_version and all remaining rules.
 
 EvidenceExecutionResolver requires explicit registration for the exact policy identity. Changed
@@ -57,3 +57,17 @@ Tests use isolated schedules and policies, never production data. Coverage inclu
 weekend/holiday previous dates, independence from the current calendar, unknown/missing binding,
 exact factor parameter/component identity, policy conflicts and registry drift. No persistence
 layer or consumer lifecycle is added in this phase.
+
+## Disabled factor branch
+
+Factor is enabled only if `factors` appears in the policy required/optional evidence lists.
+Disabled requires an empty factors tuple. Dummy identities are rejected. No factor registry
+resolution is performed; Resolver returns factor_branch=NOT_SELECTED with an empty identity
+binding list. It still validates policy identity and the explicitly bound calendar.
+
+Enabled returns factor_branch=ENABLED and keeps all existing exact identity/parameter/component/
+version checks, including nonempty identities and full policy metadata. Metadata absence cannot
+be bypassed with optional evidence selection. The factor_branch output is descriptive and is
+derived from selection, not a second configurable switch.
+
+This change installs no production policy, calendar, factor producer or snapshot.

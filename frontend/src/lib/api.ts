@@ -10,7 +10,7 @@ const BASE = ''
 
 export type IntelligenceStatus = 'READY' | 'PARTIAL' | 'UNAVAILABLE' | 'BLOCKED'
 export interface IntelligenceSection {
-  status: IntelligenceStatus; blocker?: string | null; source_status?: string | null; source_blocker?: string | null
+  status: IntelligenceStatus | 'NOT_SELECTED'; blocker?: string | null; source_status?: string | null; source_blocker?: string | null
   atr14?: string | null; reference_close?: string | null; pit_capable?: boolean | null; move_atr_ratio?: string | null
   benchmark_symbol?: string | null; benchmark_change_pct?: string | null; relative_move_pct?: string | null
   context_class?: string | null; snapshot_id?: string | null; definition_id?: string | null; total_score?: number | null

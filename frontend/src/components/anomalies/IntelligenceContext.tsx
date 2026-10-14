@@ -3,7 +3,7 @@ import { api, type AnomalyIntelligence, type IntelligenceStatus } from '@/lib/ap
 import { QK } from '@/lib/queryKeys'
 import { percent } from '@/lib/anomalyPresentation'
 
-const labels: Record<IntelligenceStatus, string> = { READY: '证据齐备', PARTIAL: '部分证据', UNAVAILABLE: '暂不可用', BLOCKED: '契约阻塞' }
+const labels: Record<IntelligenceStatus | 'NOT_SELECTED', string> = { READY: '证据齐备', PARTIAL: '部分证据', UNAVAILABLE: '暂不可用', BLOCKED: '契约阻塞', NOT_SELECTED: '策略未启用（Disabled by policy）' }
 const blockers: Record<string, string> = {
   no_applicable_evidence_policy: '未配置适用的证据策略', multiple_matching_policies: '多个证据策略冲突',
   execution_binding_missing: '缺少执行绑定', calendar_binding_missing: '缺少指定日历版本',
