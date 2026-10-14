@@ -30,8 +30,9 @@ class EvidencePolicy(PolicyModel):
     effective_from: AwareDatetime
     effective_to: AwareDatetime | None
     market: Literal["CN", "HK", "US"]
-    # Explicit finite membership. No wildcard, implicit universe or fallback.
-    symbol_scope: tuple[str, ...] = Field(min_length=1)
+    # Missing discriminator preserves the meaning of legacy finite lists.
+    scope_type: Literal["SYMBOLS", "MARKET_WIDE"] = "SYMBOLS"
+    symbol_scope: tuple[str, ...]
     event_types: tuple[EventKind, ...] = Field(min_length=1)
     event_time_source: Literal["window_end"]
     knowledge_cutoff_source: Literal["detected_at"]
@@ -57,6 +58,10 @@ class EvidencePolicy(PolicyModel):
     def validate_contract(self):
         if self.effective_to is not None and self.effective_to <= self.effective_from:
             raise ValueError("invalid_effective_period")
+        if self.scope_type == "SYMBOLS" and not self.symbol_scope:
+            raise ValueError("explicit_symbols_required")
+        if self.scope_type == "MARKET_WIDE" and self.symbol_scope:
+            raise ValueError("market_wide_symbols_must_be_empty")
         if any(market_from_symbol(symbol) != self.market for symbol in self.symbol_scope):
             raise ValueError("policy_symbol_market_conflict")
         factors = [item.name for item in self.required_factor_versions]
@@ -144,7 +149,8 @@ class EvidencePolicyResolver:
         try:
             matches = [item for item in self.store.list_policies()
                        if item.status == "ACTIVE" and item.market == identity.market
-                       and identity.symbol in item.symbol_scope and identity.event_type in item.event_types
+                       and (item.scope_type == "MARKET_WIDE" or identity.symbol in item.symbol_scope)
+                       and identity.event_type in item.event_types
                        and item.effective_from <= identity.detected_at
                        and (item.effective_to is None or identity.detected_at < item.effective_to)]
         except (sqlite3.Error, OSError, ValueError):

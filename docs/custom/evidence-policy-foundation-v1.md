@@ -7,10 +7,11 @@ No production policy is installed. No event, API, provider, UI or existing datab
 ## Explicit definition
 
 `EvidencePolicy` is frozen, JSON serializable and rejects unknown fields. Every field
-must be supplied (including nullable `effective_to`). Nested collections are tuples.
+must be supplied (including nullable `effective_to`), except `scope_type` defaults to
+`SYMBOLS` for legacy records. Nested collections are tuples.
 
 - Identity: policy_id/version, ACTIVE or INACTIVE, aware effective_from/effective_to.
-- Scope: one market, explicit finite symbol_scope and event_types. No wildcard.
+- Scope: one market, explicit `scope_type` and event_types. See scope modes below.
 - Time rules: event_time_source=window_end; knowledge_cutoff_source=detected_at;
   explicitly supplied trading_calendar identifier/version; snapshot_date_rule=
   previous_completed_trading_day. These are instructions, not computed dates.
@@ -37,7 +38,7 @@ There is no update/delete API or migration of an existing database.
 
 Resolver reads only symbol/market/event_type/detected_at from an event. It requires an
 aware timestamp and consistent symbol market. Match criteria are ACTIVE, exact market,
-explicit symbol and event membership, and `effective_from <= detected_at < effective_to`.
+scope membership and event membership, and `effective_from <= detected_at < effective_to`.
 A null end has no upper bound. All timestamp comparisons use instants, not server-local dates.
 
 - Zero matches: BLOCKED / no_matching_policy.
@@ -47,6 +48,34 @@ A null end has no upper bound. All timestamp comparisons use instants, not serve
 
 Resolver READY only means rules uniquely resolved. It does not mean evidence is READY,
 PIT verified, market calendar available or source price scales compatible.
+
+## Scope modes and compatibility
+
+The literal discriminator `scope_type` has two values:
+
+- `SYMBOLS`: `symbol_scope` is a nonempty, unique list. Existing exact symbol and
+  symbol/market consistency checks remain unchanged.
+- `MARKET_WIDE`: explicitly set `scope_type="MARKET_WIDE"` and `symbol_scope=[]`.
+  Nonempty lists, `null`, and an omitted `symbol_scope` are rejected. The event must
+  match the policy market exactly; there is no additional symbol whitelist.
+
+MARKET_WIDE is not a wildcard string, empty-list fallback, watchlist, subscription
+universe or security-master universe. It only removes the additional symbol whitelist
+for anomaly events in the specified market. It does not certify symbol existence or
+provider/history/benchmark eligibility. The resolver retains its existing event identity
+consistency validation and uses the declared event market for policy matching.
+
+Legacy JSON without `scope_type` always reads as SYMBOLS. Empty/null legacy lists do
+not become market-wide. Old runtime payloads are not rewritten, even on an identical
+idempotent save. New serialization includes the discriminator. Scope changes at the
+same policy_id/version are immutable conflicts; create a new version instead.
+
+If a market-wide and a symbol-specific policy both match the same event, resolution is
+BLOCKED / multiple_matching_policies. The same applies to overlapping market-wide
+policies. There is no specific-over-market precedence or latest-version selection.
+Time windows, event types, status and market filtering remain unchanged.
+
+No production policy, calendar or scope configuration is installed by this extension.
 
 ## Future consumer boundary
 

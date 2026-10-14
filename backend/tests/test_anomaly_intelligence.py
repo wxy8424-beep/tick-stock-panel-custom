@@ -87,6 +87,22 @@ def test_complete_aggregation_no_calculation_or_mutation(tmp_path, monkeypatch):
     json.dumps(record.to_dict(), allow_nan=False)
 
 
+def test_market_wide_policy_aggregation_and_scope_conflict(tmp_path, monkeypatch):
+    collector, event, *_ = setup(tmp_path, monkeypatch)
+    chosen = policy(policy_id="fixture-market-wide", scope_type="MARKET_WIDE", symbol_scope=[],
+                    universe_id="fixture-universe-1")
+    with sqlite3.connect(collector.policies.store.path) as db:
+        db.execute("DELETE FROM policies")
+    collector.policies.store.save(chosen)
+    collector.execution.register(PolicyExecutionBinding(policy_id=chosen.policy_id, policy_version=chosen.version,
+        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", factors=(factor(),)))
+    record = collector.collect(event)
+    assert record.status == "READY"
+    assert record.policy_id == chosen.policy_id
+    collector.policies.store.save(policy())
+    assert collector.collect(event).blockers == ("multiple_matching_policies",)
+
+
 def test_no_policy_and_conflicting_policy(tmp_path, monkeypatch):
     collector, event, *_ = setup(tmp_path, monkeypatch)
     with sqlite3.connect(collector.policies.store.path) as db:

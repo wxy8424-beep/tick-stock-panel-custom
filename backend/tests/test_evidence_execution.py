@@ -36,6 +36,16 @@ def binding(**changes):
         "factors": [factor()]} | changes)
 
 
+def test_market_wide_scope_pinned_in_exact_execution_binding():
+    calendars = TradingCalendarBindings()
+    calendars.register(calendar())
+    resolver = EvidenceExecutionResolver(calendars)
+    chosen = policy(scope_type="MARKET_WIDE", symbol_scope=[])
+    resolver.register(binding(policy=chosen))
+    assert resolver.resolve(chosen)["status"] == "READY"
+    assert resolver.resolve(policy())["status"] == "BLOCKED"
+
+
 def test_disabled_factor_execution_skips_identity_resolution(monkeypatch):
     from app.services import evidence_execution
 

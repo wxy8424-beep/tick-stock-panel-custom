@@ -38,6 +38,118 @@ def disabled_policy(**changes):
         "required_factor_versions": []} | changes))
 
 
+def test_legacy_list_defaults_to_symbols():
+    raw = policy().to_dict()
+    raw.pop("scope_type")
+    restored = EvidencePolicy.model_validate(raw)
+    assert restored.scope_type == "SYMBOLS"
+    assert restored.symbol_scope == ("AAPL.US",)
+
+
+@pytest.mark.parametrize("scope,symbol,expected", [
+    ("SYMBOLS", "AAPL.US", "READY"),
+    ("SYMBOLS", "NVDA.US", "BLOCKED"),
+    ("MARKET_WIDE", "AAPL.US", "READY"),
+    ("MARKET_WIDE", "NVDA.US", "READY"),
+    ("MARKET_WIDE", "NOT-IN-A-CATALOG.US", "READY"),
+])
+def test_scope_membership_without_provider_or_catalog(tmp_path, scope, symbol, expected):
+    store = EvidencePolicyStore(tmp_path)
+    store.save(policy(scope_type=scope, symbol_scope=[] if scope == "MARKET_WIDE" else ["AAPL.US"]))
+    assert EvidencePolicyResolver(store).resolve(event(symbol=symbol))["status"] == expected
+
+
+@pytest.mark.parametrize("market,symbol", [("CN", "600519.SH"), ("HK", "700.HK")])
+def test_market_wide_does_not_cross_markets(tmp_path, market, symbol):
+    store = EvidencePolicyStore(tmp_path)
+    store.save(policy(scope_type="MARKET_WIDE", symbol_scope=[]))
+    assert EvidencePolicyResolver(store).resolve(event(market=market, symbol=symbol))["blocker"] == "no_matching_policy"
+
+
+def test_cn_market_wide_is_bound_to_declared_event_market(tmp_path):
+    store = EvidencePolicyStore(tmp_path)
+    store.save(policy(market="CN", scope_type="MARKET_WIDE", symbol_scope=[]))
+    resolver = EvidencePolicyResolver(store)
+    assert resolver.resolve(event(market="CN", symbol="000002.SZ"))["status"] == "READY"
+    assert resolver.resolve(event())["blocker"] == "no_matching_policy"
+    assert resolver.resolve(event(market="HK", symbol="700.HK"))["blocker"] == "no_matching_policy"
+    assert resolver.resolve(event(market="CN", symbol="AAPL.US"))["blocker"] == "event_market_conflict"
+
+
+def test_overlapping_market_wide_versions_still_conflict(tmp_path):
+    store = EvidencePolicyStore(tmp_path)
+    store.save(policy(scope_type="MARKET_WIDE", symbol_scope=[]))
+    store.save(policy(version="v2", scope_type="MARKET_WIDE", symbol_scope=[]))
+    assert EvidencePolicyResolver(store).resolve(event())["blocker"] == "multiple_matching_policies"
+
+
+@pytest.mark.parametrize("changes", [
+    {"symbol_scope": []}, {"symbol_scope": None}, {"symbol_scope": ["*"]},
+    {"scope_type": None, "symbol_scope": []},
+    {"scope_type": "SYMBOLS", "symbol_scope": []},
+    {"scope_type": "MARKET_WIDE", "symbol_scope": ["AAPL.US"]},
+    {"scope_type": "MARKET_WIDE", "symbol_scope": ["*"]},
+    {"scope_type": "MARKET_WIDE", "symbol_scope": None},
+])
+def test_scope_never_inferred_or_ambiguous(changes):
+    with pytest.raises(ValidationError):
+        policy(**changes)
+
+
+def test_market_wide_requires_explicit_empty_list():
+    raw = policy(scope_type="MARKET_WIDE", symbol_scope=[]).to_dict()
+    raw.pop("symbol_scope")
+    with pytest.raises(ValidationError):
+        EvidencePolicy.model_validate(raw)
+
+
+def test_market_wide_and_symbols_overlap_has_no_precedence(tmp_path):
+    store = EvidencePolicyStore(tmp_path)
+    store.save(policy())
+    store.save(policy(policy_id="market-policy", scope_type="MARKET_WIDE", symbol_scope=[]))
+    resolver = EvidencePolicyResolver(store)
+    assert resolver.resolve(event())["blocker"] == "multiple_matching_policies"
+    assert resolver.resolve(event(symbol="NVDA.US"))["policy_id"] == "market-policy"
+
+
+@pytest.mark.parametrize("timestamp,expected", [
+    ("2026-09-30T23:59:59Z", "BLOCKED"), ("2026-10-01T00:00:00Z", "READY"),
+    ("2026-11-01T00:00:00Z", "BLOCKED"),
+])
+def test_market_wide_preserves_effective_period(tmp_path, timestamp, expected):
+    store = EvidencePolicyStore(tmp_path)
+    store.save(policy(scope_type="MARKET_WIDE", symbol_scope=[]))
+    assert EvidencePolicyResolver(store).resolve(event(detected_at=timestamp))["status"] == expected
+
+
+def test_legacy_persistence_read_is_not_rewritten_and_scope_is_immutable(tmp_path):
+    store = EvidencePolicyStore(tmp_path)
+    raw = policy().to_dict()
+    raw.pop("scope_type")
+    payload = json.dumps(raw)
+    store.path.parent.mkdir(parents=True)
+    with sqlite3.connect(store.path) as db:
+        db.execute("CREATE TABLE policies (policy_id TEXT, version TEXT, payload TEXT, PRIMARY KEY(policy_id,version))")
+        db.execute("INSERT INTO policies VALUES (?,?,?)", (raw["policy_id"], raw["version"], payload))
+    assert store.get(raw["policy_id"], raw["version"]).scope_type == "SYMBOLS"
+    assert EvidencePolicyResolver(store).resolve(event(symbol="NVDA.US"))["status"] == "BLOCKED"
+    store.save(policy())  # Equal legacy meaning remains idempotent, without migration.
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("SELECT payload FROM policies").fetchone()[0] == payload
+    with pytest.raises(ValueError, match="immutable_policy_version_conflict"):
+        store.save(policy(scope_type="MARKET_WIDE", symbol_scope=[]))
+
+
+def test_market_wide_serialization_and_store_roundtrip(tmp_path):
+    item = disabled_policy(scope_type="MARKET_WIDE", symbol_scope=[])
+    assert EvidencePolicy.model_validate_json(item.model_dump_json()) == item
+    store = EvidencePolicyStore(tmp_path)
+    store.save(item)
+    store.save(item)
+    assert store.list_policies() == (item,)
+    assert store.get(item.policy_id, item.version).to_dict()["scope_type"] == "MARKET_WIDE"
+
+
 def test_factor_disabled_roundtrip_and_resolution(tmp_path):
     item = disabled_policy()
     assert item.factor_enabled is False

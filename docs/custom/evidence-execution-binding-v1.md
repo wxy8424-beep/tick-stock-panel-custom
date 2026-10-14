@@ -39,6 +39,9 @@ registry key, not an output column. Its version string must equal the canonical 
 registry version (for example `1`, not `v1`). Calendar ID must equal policy.trading_calendar.
 When enabled, factor requirement sets must match exactly and each family has one unambiguous binding.
 The policy already pins definition_id/universe_id/normalization_version and all remaining rules.
+It also pins the scope discriminator and symbol list: legacy SYMBOLS and explicit
+MARKET_WIDE policies cannot share an execution binding with different policy content.
+Scope matching belongs to EvidencePolicyResolver; execution adds no scope precedence.
 
 EvidenceExecutionResolver requires explicit registration for the exact policy identity. Changed
 policy content, missing calendar/version or unavailable registry version returns BLOCKED; one valid
