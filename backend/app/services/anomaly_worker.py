@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class AnomalyWorker:
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, *, intelligence_execution=None):
         self.engine = AnomalyEngine(data_dir)
         self._stop = threading.Event()
         self._lock = threading.Lock()
@@ -27,6 +27,7 @@ class AnomalyWorker:
         self._market_worker = None
         self._intelligence_worker = None
         self._data_dir = data_dir
+        self._intelligence_execution = intelligence_execution
 
     def health(self) -> dict:
         with self._lock:
@@ -88,7 +89,8 @@ class AnomalyWorker:
         try:
             from app.services.anomaly_intelligence_worker import AnomalyIntelligenceWorker
 
-            self._intelligence_worker = AnomalyIntelligenceWorker(self._data_dir)
+            self._intelligence_worker = AnomalyIntelligenceWorker(self._data_dir,
+                execution=self._intelligence_execution)
             self._intelligence_worker.start()
         except Exception:
             logger.warning("Intelligence证据聚合不可用. 原异动观察继续运行")

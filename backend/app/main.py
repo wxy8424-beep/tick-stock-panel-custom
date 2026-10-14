@@ -105,6 +105,10 @@ async def _application_lifespan(app: FastAPI):
 
     # 数据层
     store = DataStore()
+    # Configuration conflicts are fatal, before any data/quote/enrichment workers start.
+    from app.services.anomaly_intelligence_production import bootstrap_production_evidence
+
+    app.state.intelligence_execution = bootstrap_production_evidence(store.data_dir)
     repo = KlineRepository(store)
     app.state.datastore = store
     app.state.repo = repo
@@ -362,7 +366,8 @@ async def _application_lifespan(app: FastAPI):
     try:
         from app.services.anomaly_worker import AnomalyWorker
 
-        app.state.anomaly_worker = AnomalyWorker(store.data_dir)
+        app.state.anomaly_worker = AnomalyWorker(store.data_dir,
+            intelligence_execution=app.state.intelligence_execution)
         app.state.anomaly_worker.start()
     except Exception:
         logger.warning("异动观察初始化失败. 主应用与行情链路保持运行")

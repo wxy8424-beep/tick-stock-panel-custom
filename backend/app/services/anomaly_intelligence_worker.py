@@ -7,8 +7,8 @@ from app.services.anomaly_intelligence import AnomalyEvidenceCollector, AnomalyI
 
 
 class AnomalyIntelligenceWorker:
-    def __init__(self, data_dir, *, collector=None):
-        self.collector = collector or AnomalyEvidenceCollector(data_dir)
+    def __init__(self, data_dir, *, collector=None, execution=None):
+        self.collector = collector or AnomalyEvidenceCollector(data_dir, execution=execution)
         self.store = AnomalyIntelligenceStore(data_dir)
         self.events = AnomalyStore(data_dir)
         self._stop = threading.Event()
