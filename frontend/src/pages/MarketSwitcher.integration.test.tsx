@@ -104,7 +104,7 @@ it('direct US URL preserves US on refresh and never mounts CN query keys', async
 
 it('Watchlist retains CN filters and the original query without changing on disabled clicks', async () => {
   await render(<Watchlist />, '/watchlist')
-  expect(host.querySelector('h1')?.textContent).toBe('自选股')
+  expect(host.querySelector('h1')?.textContent).toBe('自选')
   expect(fixtures.queryKeys).toContainEqual(['watchlist'])
   const content = host.textContent
   const count = fixtures.queryKeys.length
