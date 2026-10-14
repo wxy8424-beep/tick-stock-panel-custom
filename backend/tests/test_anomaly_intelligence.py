@@ -38,7 +38,7 @@ def setup(tmp_path, monkeypatch, *, selected=("historical", "market", "factors")
     execution = EvidenceExecutionResolver(calendars)
     chosen = policy(required_evidence=list(selected), optional_evidence=[], universe_id="fixture-universe-1")
     execution.register(PolicyExecutionBinding(policy_id=chosen.policy_id, policy_version=chosen.version,
-        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", factors=(factor(),)))
+        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", calendar_content_hash=calendar().content_hash, factors=(factor(),)))
     EvidencePolicyStore(tmp_path).save(chosen)
     collector = AnomalyEvidenceCollector(tmp_path, execution=execution)
     historical = {"symbol": "AAPL.US", "market": "US", "status": "available", "blocker": None,
@@ -95,7 +95,7 @@ def test_market_wide_policy_aggregation_and_scope_conflict(tmp_path, monkeypatch
         db.execute("DELETE FROM policies")
     collector.policies.store.save(chosen)
     collector.execution.register(PolicyExecutionBinding(policy_id=chosen.policy_id, policy_version=chosen.version,
-        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", factors=(factor(),)))
+        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", calendar_content_hash=calendar().content_hash, factors=(factor(),)))
     record = collector.collect(event)
     assert record.status == "READY"
     assert record.policy_id == chosen.policy_id
@@ -334,7 +334,7 @@ def test_disabled_factor_not_queried_or_blocked(tmp_path, monkeypatch, retrospec
     EvidencePolicyStore(tmp_path).save(chosen)
     execution = EvidenceExecutionResolver(collector.execution.calendars)
     execution.register(PolicyExecutionBinding(policy_id=chosen.policy_id, policy_version=chosen.version,
-        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", factors=()))
+        policy=chosen, calendar_id=chosen.trading_calendar, calendar_version="1", calendar_content_hash=calendar().content_hash, factors=()))
     collector.execution = execution
     monkeypatch.setattr(collector.factors, "query", lambda *a, **kw: pytest.fail("disabled must not query snapshots"))
     if retrospective:

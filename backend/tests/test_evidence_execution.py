@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 from test_evidence_policy import disabled_policy, policy
 
+from app.market_calendar import CALENDARS
 from app.services.evidence_execution import (
     EvidenceExecutionResolver,
     FactorIdentityContract,
@@ -13,15 +14,18 @@ from app.services.evidence_execution import (
     TradingCalendarContract,
 )
 
+FIXTURE_SESSION = CALENDARS["US"].session
+
 
 def calendar(**changes):
-    return TradingCalendarContract.model_validate({
+    return TradingCalendarContract.freeze(**{
         "calendar_id": "fixture-calendar-v1", "version": "1", "market": "US",
         "timezone": "America/New_York", "source": ["isolated-fixture"],
         "effective_from": "2026-01-01", "effective_to": "2026-12-31",
         "coverage_start": "2026-01-01", "coverage_end": "2026-12-31",
         "trading_weekdays": [0, 1, 2, 3, 4], "holidays": ["2026-09-07"],
-        "additional_trading_days": [],
+        "additional_trading_days": [], "half_days": [], "early_close": None,
+        "session": FIXTURE_SESSION, "source_family": "isolated_fixture", "source_updated_on": "2026-10-14",
     } | changes)
 
 
@@ -33,6 +37,7 @@ def factor(**changes):
 def binding(**changes):
     return PolicyExecutionBinding.model_validate({"policy_id": "fixture-policy", "policy_version": "v1",
         "policy": policy(), "calendar_id": "fixture-calendar-v1", "calendar_version": "1",
+        "calendar_content_hash": calendar().content_hash,
         "factors": [factor()]} | changes)
 
 
@@ -90,9 +95,11 @@ def test_previous_day_uses_frozen_schedule(day, previous, monkeypatch):
 
     registry = TradingCalendarBindings()
     registry.register(calendar())
+    frozen_hash = calendar().content_hash
     monkeypatch.setitem(CALENDARS, "US", None)
     result = registry.resolve_previous_trading_day(market="US", calendar_id="fixture-calendar-v1",
-                                                  version="1", date=date.fromisoformat(day))
+                                                  version="1", date=date.fromisoformat(day),
+                                                  content_hash=frozen_hash)
     assert result["previous_trading_day"] == previous
 
 
@@ -102,7 +109,7 @@ def test_unknown_or_outside_coverage_blocks(changes):
     registry = TradingCalendarBindings()
     registry.register(calendar())
     assert registry.resolve_previous_trading_day(**({"market": "US", "calendar_id": "fixture-calendar-v1",
-        "version": "1", "date": date(2026, 9, 8)} | changes))["status"] == "BLOCKED"
+        "version": "1", "date": date(2026, 9, 8), "content_hash": calendar().content_hash} | changes))["status"] == "BLOCKED"
 
 
 @pytest.mark.parametrize("changes", [{"registry_key": "ma5"}, {"registry_key": "MA"},

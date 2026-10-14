@@ -1,7 +1,13 @@
 # Evidence Execution Binding Foundation v1
 
-Independent explicit registration only. No production bindings are installed. No Collector,
-Intelligence, API, UI, database, provider, event, detector, Engine or Snapshot Builder changes.
+Independent explicit registration only. No production bindings are installed. The calendar
+extension shares frozen schedule definitions and forwards the pinned hash in Collector;
+it changes no API, UI, database, provider, event, detector, Engine or Snapshot Builder behavior.
+
+The immutable-calendar extension and its consumer hash forwarding are described in
+[Immutable Trading Calendar Contract v1](immutable-trading-calendar-contract-v1.md).
+The original date-only calendar payload is incomplete and is no longer accepted as a
+complete artifact. Fixtures must explicitly supply full session content and a verified hash.
 
 ## Calendar
 
@@ -34,7 +40,7 @@ silently interpreted using new defaults. Version drift fails closed.
 ## Policy execution
 
 PolicyExecutionBinding pins the full frozen policy, exact policy_id/version, explicit calendar
-ID/version, and factor identities. policy.required_factor_versions.name means the exact Engine
+ID/version/content_hash, and factor identities. policy.required_factor_versions.name means the exact Engine
 registry key, not an output column. Its version string must equal the canonical decimal integer
 registry version (for example `1`, not `v1`). Calendar ID must equal policy.trading_calendar.
 When enabled, factor requirement sets must match exactly and each family has one unambiguous binding.

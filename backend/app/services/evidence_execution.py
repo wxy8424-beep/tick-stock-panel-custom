@@ -1,5 +1,7 @@
 """Explicit execution bindings only; no current-calendar fallback or evidence collection."""
-from datetime import date, timedelta
+import hashlib
+import json
+from datetime import date, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -7,10 +9,11 @@ from pydantic import Field, StrictInt, model_validator
 
 from app.factors.engine import FactorRequest
 from app.factors.registry import get_engine_factor
+from app.market_calendar import CALENDARS, MARKET_TIMEZONES, SessionRules
 from app.services.evidence_policy import EvidencePolicy, PolicyModel
 
 
-class TradingCalendarContract(PolicyModel):
+class CalendarContent(PolicyModel):
     calendar_id: str = Field(min_length=1)
     version: str = Field(min_length=1)
     market: Literal["CN", "HK", "US"]
@@ -24,11 +27,16 @@ class TradingCalendarContract(PolicyModel):
     trading_weekdays: tuple[StrictInt, ...] = Field(min_length=1)
     holidays: tuple[date, ...]
     additional_trading_days: tuple[date, ...]
+    session: SessionRules
+    half_days: tuple[date, ...]
+    early_close: time | None
+    source_family: str = Field(min_length=1)
+    source_updated_on: date
 
     @model_validator(mode="after")
     def validate_schedule(self):
-        ZoneInfo(self.timezone)
-        if self.timezone != {"CN": "Asia/Shanghai", "HK": "Asia/Hong_Kong", "US": "America/New_York"}[self.market]:
+        zone = ZoneInfo(self.timezone)
+        if zone.key != MARKET_TIMEZONES[self.market]:
             raise ValueError("calendar_market_timezone_conflict")
         if not self.effective_from <= self.coverage_start <= self.coverage_end <= self.effective_to:
             raise ValueError("calendar_period_conflict")
@@ -40,12 +48,67 @@ class TradingCalendarContract(PolicyModel):
                 or set(self.holidays) & set(self.additional_trading_days)):
             raise ValueError("calendar_day_conflict")
         if any(not self.coverage_start <= day <= self.coverage_end
-               for day in self.holidays + self.additional_trading_days):
+               for day in self.holidays + self.additional_trading_days + self.half_days):
             raise ValueError("calendar_day_outside_coverage")
-        if any(not value.strip() or value.lower() in {"latest", "unknown", "default"}
+        if (len(set(self.half_days)) != len(self.half_days) or set(self.half_days) & set(self.holidays)
+                or any(day.weekday() not in self.trading_weekdays and day not in self.additional_trading_days
+                       for day in self.half_days)):
+            raise ValueError("invalid_half_day")
+        if self.half_days and self.early_close is None:
+            raise ValueError("half_day_close_required")
+        if self.early_close is not None and (self.early_close.tzinfo is not None or not any(
+                start < self.early_close <= end for start, end in self.session.regular_windows)):
+            raise ValueError("invalid_early_close")
+        if any(not value.strip() or value.strip().lower() in {"latest", "current", "unknown", "default", "*"}
                for value in (self.calendar_id, self.version, *self.source)):
             raise ValueError("explicit_calendar_metadata_required")
         return self
+
+    def canonical_payload(self) -> dict:
+        # ID/version label the artifact; the hash describes its complete content.
+        payload = self.model_dump(mode="json", exclude={"calendar_id", "version", "content_hash"})
+        for key in ("source", "holidays", "half_days", "additional_trading_days", "trading_weekdays"):
+            payload[key] = sorted(payload[key])
+        return payload
+
+    def canonical_json(self) -> str:
+        return json.dumps(self.canonical_payload(), sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    def calculated_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+
+
+class TradingCalendarContract(CalendarContent):
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def verify_hash(self):
+        if self.content_hash != self.calculated_hash():
+            raise ValueError("calendar_content_hash_mismatch")
+        return self
+
+    def metadata(self) -> dict:
+        return {"calendar_id": self.calendar_id, "version": self.version, "content_hash": self.content_hash,
+                "coverage_start": self.coverage_start.isoformat(), "coverage_end": self.coverage_end.isoformat(),
+                "source": list(self.source), "last_updated": self.source_updated_on.isoformat()}
+
+    @classmethod
+    def freeze(cls, **payload):
+        content = CalendarContent.model_validate(payload)
+        return cls(**content.model_dump(), content_hash=content.calculated_hash())
+
+    @classmethod
+    def from_canonical(cls, market: str):
+        """Explicitly freeze the single source; never called as resolution fallback."""
+        item = CALENDARS[market]
+        return cls.freeze(calendar_id=item.calendar_id, version=item.version, market=item.market,
+            timezone=item.timezone, source=item.sources, source_family="official_exchange",
+            source_updated_on=item.last_updated, effective_from=item.coverage_start,
+            effective_to=item.coverage_end, coverage_start=item.coverage_start, coverage_end=item.coverage_end,
+            trading_weekdays=item.trading_weekdays, holidays=tuple(item.holidays),
+            additional_trading_days=tuple(item.additional_trading_days),
+            half_days=tuple(item.half_days), early_close=item.early_close,
+            session=item.session)
 
 
 class TradingCalendarBindings:
@@ -56,17 +119,21 @@ class TradingCalendarBindings:
         calendar = TradingCalendarContract.model_validate_json(calendar.model_dump_json())
         key = (calendar.calendar_id, calendar.version)
         existing = self._versions.get(key)
-        if existing is not None and existing != calendar:
-            raise ValueError("immutable_calendar_version_conflict")
+        if existing is not None:
+            if existing.content_hash != calendar.content_hash:
+                raise ValueError("immutable_calendar_version_conflict")
+            return
         self._versions[key] = calendar
 
-    def get(self, market: str, calendar_id: str, version: str) -> TradingCalendarContract | None:
+    def get(self, market: str, calendar_id: str, version: str,
+            content_hash: str | None = None) -> TradingCalendarContract | None:
         item = self._versions.get((calendar_id, version))
-        return item if item is not None and item.market == market else None
+        return item if (item is not None and item.market == market
+                        and (content_hash is None or item.content_hash == content_hash)) else None
 
     def resolve_previous_trading_day(self, *, market: str, calendar_id: str,
-                                     version: str, date: date) -> dict:
-        item = self.get(market, calendar_id, version)
+                                     version: str, date: date, content_hash: str) -> dict:
+        item = self.get(market, calendar_id, version, content_hash)
         if item is None:
             return {"status": "BLOCKED", "blocker": "calendar_binding_missing"}
         if type(date) is not type(item.coverage_start) or not item.coverage_start <= date <= item.coverage_end:
@@ -77,8 +144,20 @@ class TradingCalendarBindings:
             if day in item.additional_trading_days or (
                     day.weekday() in item.trading_weekdays and day not in item.holidays):
                 return {"status": "READY", "blocker": None, "previous_trading_day": day.isoformat(),
-                        "calendar_id": item.calendar_id, "version": item.version, "source": list(item.source)}
+                        "calendar_id": item.calendar_id, "version": item.version,
+                        "content_hash": item.content_hash, "source": list(item.source)}
         return {"status": "BLOCKED", "blocker": "previous_day_outside_calendar_coverage"}
+
+    def resolve_session(self, *, market: str, calendar_id: str, version: str, content_hash: str, now) -> dict:
+        from app.market_session import get_calendar_session
+
+        item = self.get(market, calendar_id, version, content_hash)
+        if item is None:
+            return {"status": "BLOCKED", "blocker": "calendar_binding_missing"}
+        result = get_calendar_session(item, now)
+        if result.calendar_status != "covered":
+            return {"status": "BLOCKED", "blocker": "calendar_date_outside_coverage"}
+        return {"status": "READY", "blocker": None, "session": result.public_metadata()}
 
 
 class FactorParameters(PolicyModel):
@@ -113,6 +192,7 @@ class PolicyExecutionBinding(PolicyModel):
     policy: EvidencePolicy
     calendar_id: str = Field(min_length=1)
     calendar_version: str = Field(min_length=1)
+    calendar_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     factors: tuple[FactorIdentityContract, ...]
 
     @model_validator(mode="after")
@@ -155,7 +235,8 @@ class EvidenceExecutionResolver:
             return {"status": "BLOCKED", "blocker": "execution_binding_missing"}
         if binding.policy != policy or policy.status != "ACTIVE":
             return {"status": "BLOCKED", "blocker": "execution_policy_conflict"}
-        calendar = self.calendars.get(policy.market, binding.calendar_id, binding.calendar_version)
+        calendar = self.calendars.get(policy.market, binding.calendar_id, binding.calendar_version,
+                                      binding.calendar_content_hash)
         if calendar is None:
             return {"status": "BLOCKED", "blocker": "calendar_binding_missing"}
         # Definition checks only; never execute Engine.compute or collect snapshots.

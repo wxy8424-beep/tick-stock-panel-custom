@@ -197,7 +197,8 @@ class AnomalyEvidenceCollector:
         calendar = execution["calendar_binding"]
         day = instant(event["window_end"]).astimezone(ZoneInfo(calendar["timezone"])).date()
         previous = self.execution.calendars.resolve_previous_trading_day(market=event["market"],
-            calendar_id=calendar["calendar_id"], version=calendar["version"], date=day)
+            calendar_id=calendar["calendar_id"], version=calendar["version"], date=day,
+            content_hash=calendar["content_hash"])
         if previous["status"] != "READY":
             return evidence("BLOCKED", previous["blocker"])
         snapshot_date = date.fromisoformat(previous["previous_trading_day"])

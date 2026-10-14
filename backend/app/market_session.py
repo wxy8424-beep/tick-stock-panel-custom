@@ -5,19 +5,15 @@ security availability; CN final processing remains a separate ingestion contract
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, timedelta
 from threading import RLock
 from zoneinfo import ZoneInfo
 
 from app.market_calendar import CALENDARS
 
-_ZONES = {"CN": "Asia/Shanghai", "HK": "Asia/Hong_Kong", "US": "America/New_York"}
-_WINDOWS = {
-    "CN": ((time(9, 30), time(11, 30)), (time(13), time(15))),
-    "HK": ((time(9, 30), time(12)), (time(13), time(16))),
-    "US": ((time(9, 30), time(16)),),
-}
+_ZONES = {market: calendar.timezone for market, calendar in CALENDARS.items()}
 _SUFFIX_MARKETS = {"SH": "CN", "SZ": "CN", "BJ": "CN", "HK": "HK", "US": "US"}
 _STATES = {"pre_open", "regular", "break", "post_market", "closed", "holiday", "unknown"}
 _SIGNALS: dict[str, MarketRuntimeSignal] = {}
@@ -102,6 +98,7 @@ class MarketSession:
     runtime_status: str = "unavailable"
     diagnostic_code: str | None = None
     runtime_observed_at: datetime | None = None
+    calendar_metadata_json: str | None = None
 
     @property
     def local_date(self) -> date:
@@ -116,7 +113,8 @@ class MarketSession:
             "code": self.market, "timezone": self.timezone.key,
             "local_time": self.local_datetime.isoformat(), "session_state": self.session_state,
             "calendar_status": self.calendar_status, "confirmed_trading_day": self.confirmed_trading_day,
-            "calendar_coverage": CALENDARS[self.market].metadata(),
+            "calendar_coverage": (json.loads(self.calendar_metadata_json) if self.calendar_metadata_json
+                                  else CALENDARS[self.market].metadata()),
             "half_day": self.half_day, "early_close": self.early_close,
             "session_detail": self.session_detail, "state_source": self.state_source,
             "runtime_status": self.runtime_status, "diagnostic_code": self.diagnostic_code,
@@ -136,43 +134,8 @@ def get_market_session(market: str, now: datetime | None = None,
     now = now if now is not None else datetime.now(UTC)
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must include timezone")
-    zone = ZoneInfo(_ZONES[market])
-    local = now.astimezone(zone)
-    clock, day = local.time(), local.date()
-    calendar = CALENDARS[market]
-    covered = calendar.coverage_start <= day <= calendar.coverage_end
-    half_day = covered and day in calendar.half_days
-    end = calendar.early_close if half_day else _WINDOWS[market][-1][1]
-    windows = (_WINDOWS[market][0],) if market == "HK" and half_day else _WINDOWS[market]
-    if market == "US" and half_day:
-        windows = ((time(9, 30), end),)
-    state = "closed"
-    detail = None
-    trading_day = None if not covered else day.weekday() < 5 and day not in calendar.holidays
-    if not covered:
-        state = "unknown"
-    elif day in calendar.holidays:
-        state = "holiday"
-    elif trading_day:
-        if any(start <= clock <= end for start, end in windows):
-            state = "regular"
-        elif (time(4) if market == "US" else time(0)) <= clock < windows[0][0]:
-            state = "pre_open"
-        elif windows[0][1] < clock < windows[-1][0]:
-            state = "break"
-        elif market == "US" and end < clock < (time(17) if half_day else time(20)):
-            state = "post_market"
-        elif market == "HK" and end < clock < time(end.hour, 10):
-            state, detail = "post_market", "closing_auction_window"
-        # Announced Nasdaq overnight launch remains outside this day-session contract.
-        # Do not label a potentially active overnight venue "closed" after launch date.
-    if covered and market == "US" and day >= date(2026, 12, 6) and (clock < time(4) or clock >= time(21)):
-        state, detail = "unknown", "overnight_session_unverified"
-    result = MarketSession(
-        market, zone, local, state, "covered" if covered else "out_of_coverage", trading_day,
-        half_day, end.isoformat(timespec="minutes") if half_day else None, detail,
-        diagnostic_code=None if covered else "calendar_out_of_coverage",
-    )
+    result = get_calendar_session(CALENDARS[market], now)
+    state = result.session_state
     if runtime_signal is None:
         with _SIGNAL_LOCK:
             runtime_signal = _SIGNALS.get(market)
@@ -198,3 +161,51 @@ def get_market_session(market: str, now: datetime | None = None,
                    runtime_status="verified" if provider_state != "unknown" else "unknown",
                    diagnostic_code="calendar_provider_conflict" if conflict else
                    "provider_status_unknown" if provider_state == "unknown" else result.diagnostic_code)
+
+
+def get_calendar_session(calendar, now: datetime) -> MarketSession:
+    """Replay one explicit frozen calendar; no global calendar or runtime signal reads."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must include timezone")
+    market = calendar.market
+    rules = calendar.session
+    zone = ZoneInfo(calendar.timezone)
+    local = now.astimezone(zone)
+    clock, day = local.time(), local.date()
+    covered = calendar.coverage_start <= day <= calendar.coverage_end
+    half_day = covered and day in calendar.half_days
+    end = calendar.early_close if half_day else rules.regular_windows[-1][1]
+    windows = tuple((start, min(close, end)) for start, close in rules.regular_windows if start <= end)
+    state = "closed"
+    detail = None
+    trading_day = None if not covered else (day in calendar.additional_trading_days or (
+        day.weekday() in calendar.trading_weekdays and day not in calendar.holidays))
+    if not covered:
+        state = "unknown"
+    elif day in calendar.holidays:
+        state = "holiday"
+    elif trading_day:
+        if any(start <= clock <= end for start, end in windows):
+            state = "regular"
+        elif rules.pre_open_start <= clock < windows[0][0]:
+            state = "pre_open"
+        elif windows[0][1] < clock < windows[-1][0]:
+            state = "break"
+        elif (rules.half_day_post_market_end if half_day else rules.post_market_end) is not None and (
+                end < clock < (rules.half_day_post_market_end if half_day else rules.post_market_end)):
+            state = "post_market"
+        elif rules.closing_auction_minutes is not None and end < clock < (
+                datetime.combine(day, end) + timedelta(minutes=rules.closing_auction_minutes)).time():
+            state, detail = "post_market", "closing_auction_window"
+        # Announced Nasdaq overnight launch remains outside this day-session contract.
+        # Do not label a potentially active overnight venue "closed" after launch date.
+    if (covered and rules.overnight_unverified_from is not None and day >= rules.overnight_unverified_from
+            and (clock < rules.overnight_before or clock >= rules.overnight_after)):
+        state, detail = "unknown", "overnight_session_unverified"
+    result = MarketSession(
+        market, zone, local, state, "covered" if covered else "out_of_coverage", trading_day,
+        half_day, end.isoformat(timespec="minutes") if half_day else None, detail,
+        diagnostic_code=None if covered else "calendar_out_of_coverage",
+        calendar_metadata_json=json.dumps(calendar.metadata(), sort_keys=True),
+    )
+    return result
