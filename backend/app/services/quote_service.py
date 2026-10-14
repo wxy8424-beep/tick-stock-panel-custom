@@ -403,13 +403,17 @@ class QuoteService:
 
     def _archive_records(self, records: list[dict], provider: str) -> None:
         """Best-effort independent history before CN/non-CN routing or filtering."""
+        from app.services.archive_trace import record_rows
         from app.services.snapshot_archive import SnapshotWriter
 
         if not records:
             return
         data_dir = getattr(getattr(getattr(self, "_repo", None), "store", None), "data_dir", None)
         if data_dir is None:
+            record_rows(records, "REJECTED", reason="archive_dependency_missing",
+                        rejected_at="QUOTESERVICE_ACCEPTED")
             return
+        record_rows(records, "QUOTESERVICE_ACCEPTED")
         received_at = datetime.now(UTC)
         try:
             if getattr(self, "_snapshot_writer", None) is None:
@@ -716,7 +720,10 @@ class QuoteService:
             return True
         try:
             with self._fetch_lock:
-                records = fetch(markets)
+                from app.services.archive_trace import trace_origin
+
+                with trace_origin("quote_service_poll"):
+                    records = fetch(markets)
                 self._archive_records(records, name)
                 self._update_non_cn_quotes(self._partition_realtime_records(records))
         except Exception:
@@ -775,7 +782,10 @@ class QuoteService:
                     t0 = time.perf_counter()
                     now_ts = time.perf_counter()
                     provider = custom_sources.get_provider(provider_name)
-                    records = provider.get_realtime()
+                    from app.services.archive_trace import trace_origin
+
+                    with trace_origin("quote_service_fetch"):
+                        records = provider.get_realtime()
                     self._archive_records(records, provider_name)
                     scoped = getattr(provider, "realtime_snapshot_scope", None) == "symbols"
                     if scoped:

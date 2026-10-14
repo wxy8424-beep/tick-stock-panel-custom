@@ -14,6 +14,7 @@ from pathlib import Path
 from app.data_providers.contracts import QUANTITY_UNITS
 from app.data_providers.quote_quality import validate_quote
 from app.market_session import get_market_session, market_from_symbol
+from app.services.archive_trace import batch_stage, record_rows, row_trace, traced_batch
 
 logger = logging.getLogger(__name__)
 MAX_BATCH = 20_000
@@ -62,10 +63,14 @@ class SnapshotArchive:
         if len(rows) > MAX_BATCH:
             raise ValueError("snapshot batch too large")
         values = []
+        traces = []
         for row in rows:
             symbol = row.get("symbol") if isinstance(row, dict) else None
             market = market_from_symbol(symbol)
             if market is None or len(symbol) > 128:
+                trace = row_trace(rows, row)
+                if trace:
+                    trace.stage("REJECTED", reason="archive_symbol_invalid", rejected_at="WRITER_ATTEMPTED")
                 continue
             # Old providers may omit market; only the established symbol resolver
             # supplies it. Explicit conflicts remain unknown quality, not hidden.
@@ -83,7 +88,8 @@ class SnapshotArchive:
                            quality["observed_at"], quality["latency_ms"],
                            unit if isinstance(unit, str) and unit in QUANTITY_UNITS else "unknown",
                            session.diagnostic_code))
-        return values
+            traces.append(row_trace(rows, row))
+        return traced_batch(values, traces)
 
     def _write(self, values: list[tuple]) -> int:
         if not values:
@@ -164,18 +170,27 @@ class SnapshotWriter:
     def submit(self, rows: list[dict], received_at: datetime, provider: str) -> bool:
         if not rows:
             return True
+        record_rows(rows, "WRITER_ATTEMPTED")
         with self._lock:
             if self._closing.is_set() or len(rows) > MAX_BATCH:
+                record_rows(rows, "REJECTED", reason="writer_closed_or_batch_limit",
+                            rejected_at="WRITER_ATTEMPTED")
                 logger.warning("快照归档未接收: 已关闭或批次超限")
                 return False
             if self._queue.full():
+                record_rows(rows, "REJECTED", reason="queue_full", rejected_at="WRITER_ATTEMPTED")
                 logger.warning("快照归档未接收: 队列已满")
                 return False
             # Capture quality/session now, not after a delayed disk write.
-            batch = self.archive.prepare(rows, received_at, provider)
+            try:
+                batch = self.archive.prepare(rows, received_at, provider)
+            except Exception:
+                record_rows(rows, "REJECTED", reason="prepare_failed", rejected_at="WRITER_ATTEMPTED")
+                raise
             try:
                 self._queue.put_nowait(batch)
             except queue.Full:
+                batch_stage(batch, "REJECTED", reason="queue_full")
                 logger.warning("快照归档未接收: 队列已满")
                 return False
             if self._thread is None:
@@ -190,7 +205,10 @@ class SnapshotWriter:
             except queue.Empty:
                 continue
             try:
+                batch_stage(batch, "WRITER_ATTEMPTED", queue_outcome="ENQUEUED")
                 self.archive._write(batch)
+                # _write returns only after SQLite's transaction context committed.
+                batch_stage(batch, "PERSISTED")
             except Exception:
                 # No raw error message or quote payload in logs.
                 logger.warning("快照归档批次写入失败, 行情链路保持运行")

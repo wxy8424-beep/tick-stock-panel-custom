@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import threading
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -19,6 +20,7 @@ from app.data_providers.quote_quality import aggregate_quality, validate_quote
 from app.market_session import market_from_symbol, remove_market_signals, replace_market_signals
 from app.plugins.longbridge.market_state import REFRESH_SECONDS, SOURCE, parse_market_status
 from app.plugins.longbridge.realtime_health import ERROR_CODES, Observation, evaluate, utc_now
+from app.services.archive_trace import RequestTrace, request_trace, traced_rows
 
 logger = logging.getLogger(__name__)
 _ENV_NAMES = ("LONGBRIDGE_APP_KEY", "LONGBRIDGE_APP_SECRET", "LONGBRIDGE_ACCESS_TOKEN")
@@ -263,6 +265,18 @@ class LongbridgeProvider:
             raise ValueError("unsupported read-only dashboard method")
         with self._lock:
             context = self._get_context() if kind == "quote" else self._get_dashboard_context(kind)
+            if kind == "quote" and method == "quote":
+                symbols = args[0] if args else kwargs.get("symbols", [])
+                with request_trace(symbols, origin="dashboard_quote") as trace:
+                    response = getattr(context, method)(*args, **kwargs)
+                    if trace.traces and isinstance(response, (list, tuple)):
+                        for item in response:
+                            with suppress(Exception):
+                                trace.received(item.symbol)
+                        trace.missing()
+                    elif trace.traces:
+                        trace.reject("response_shape_invalid", "PROVIDER_RECEIVED")
+                    return response
             return getattr(context, method)(*args, **kwargs)
 
     def _get_dashboard_context(self, kind: str):
@@ -352,6 +366,7 @@ class LongbridgeProvider:
         if not wanted:
             return []
         rows: dict[str, dict] = {}
+        trace_rows = {}
         received: dict[str, datetime] = {}
         errors: dict[str, list[str]] = {}
         qualities: dict[str, list[dict]] = {}
@@ -374,10 +389,12 @@ class LongbridgeProvider:
                 return []
             for offset in range(0, len(wanted), MAX_SYMBOLS):
                 chunk = wanted[offset:offset + MAX_SYMBOLS]
+                trace = RequestTrace(chunk)
                 try:
                     quotes = context.quote(chunk)
                     received_at = self._clock()
                 except Exception as error:
+                    trace.reject("request_failed_unclassified", "PROVIDER_RECEIVED")
                     self.last_errors.append({"stage": "quote", "batch": offset // MAX_SYMBOLS,
                                              "reason": error_category(error)})
                     logger.warning("Longbridge quote batch failed: %s", self.last_errors[-1]["reason"])
@@ -386,6 +403,7 @@ class LongbridgeProvider:
                 if quotes is None:
                     quotes = []
                 if not isinstance(quotes, (list, tuple)):
+                    trace.reject("response_shape_invalid", "PROVIDER_RECEIVED")
                     remember_error(chunk, "invalid_response_fields")
                     self.last_errors.append({"stage": "rows", "batch": offset // MAX_SYMBOLS,
                                              "reason": "invalid_response_fields"})
@@ -411,7 +429,11 @@ class LongbridgeProvider:
                         failed_symbol = quote.symbol
                         if failed_symbol not in chunk:
                             raise ValueError("unexpected symbol")
+                        trace.received(failed_symbol)
                         row = self._normalize(quote)
+                        identity = trace.normalized(failed_symbol)
+                        if identity is not None:
+                            trace_rows[id(row)] = (row, identity)
                         try:
                             report = validate_quote(row, received_at, provider_volume=getattr(quote, "volume", None))
                         except Exception:
@@ -423,6 +445,8 @@ class LongbridgeProvider:
                         rows[row["symbol"]] = row
                         received[row["symbol"]] = received_at
                     except Exception:
+                        if failed_symbol in chunk:
+                            trace.reject("normalization_failed", "NORMALIZED", failed_symbol)
                         # SDK field access/parser failures are isolated per row.
                         # Unknown payloads stay in batch diagnostics, not other markets.
                         failed_market = market_from_symbol(failed_symbol)
@@ -433,12 +457,14 @@ class LongbridgeProvider:
                                 "observed_at": received_at.isoformat(), "latency_ms": None,
                             })
                         rejected += 1
+                trace.missing()
                 if rejected:
                     self.last_errors.append({"stage": "rows", "batch": offset // MAX_SYMBOLS,
                                              "rejected": rejected, "reason": "invalid_response_fields"})
                     logger.debug("Longbridge quote batch rejected %d invalid rows", rejected)
             self._record_realtime(wanted, rows, received, errors, qualities=qualities)
-        return list(rows.values())
+        result = list(rows.values())
+        return traced_rows(result, trace_rows)
 
     def get_realtime_for_markets(self, markets: list[str]) -> list[dict]:
         symbols = [s for s in self.configured_symbols() if market_from_symbol(s) in markets]
