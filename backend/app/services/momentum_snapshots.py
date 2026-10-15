@@ -22,6 +22,7 @@ from pydantic import (
 State = Literal["READY", "PARTIAL", "UNAVAILABLE", "BLOCKED"]
 Label = Annotated[str, Field(min_length=1, pattern=r"^\S(?:.*\S)?$")]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+CONTRACT_BINDING_FIELDS = frozenset({"calculation_id", "calculation_content_hash", "score_profile_content_hash"})
 
 
 def canonical(value: dict) -> str:
@@ -40,6 +41,10 @@ class MomentumIdentity(BaseModel):
     input_contract_id: Label
     input_contract_version: Label
     calculation_version: Label
+    # Additive exact bindings. Missing legacy fields never imply an exact contract.
+    calculation_id: Label | None = None
+    calculation_content_hash: Digest | None = None
+    score_profile_content_hash: Digest | None = None
     calendar_id: Label
     calendar_version: Label
     calendar_content_hash: Digest
@@ -54,9 +59,16 @@ class MomentumIdentity(BaseModel):
     def profile_pair(self):
         if (self.score_profile_id is None) != (self.score_profile_version is None):
             raise ValueError("score_profile_identity_incomplete")
+        if (self.calculation_id is None) != (self.calculation_content_hash is None):
+            raise ValueError("calculation_identity_incomplete")
+        if self.calculation_id is not None:
+            if (self.score_profile_id is None) != (self.score_profile_content_hash is None):
+                raise ValueError("exact_score_profile_hash_required")
+        elif self.score_profile_content_hash is not None:
+            raise ValueError("exact_calculation_binding_required")
         for key in ("input_contract_id", "input_contract_version", "calculation_version",
                     "calendar_id", "calendar_version", "universe_id", "universe_version",
-                    "score_profile_id", "score_profile_version"):
+                    "score_profile_id", "score_profile_version", "calculation_id"):
             value = getattr(self, key)
             if value is not None and value.lower() in {"*", "latest", "current", "unknown", "blocked"}:
                 raise ValueError("exact_identity_required")
@@ -64,7 +76,13 @@ class MomentumIdentity(BaseModel):
 
     @property
     def logical_key(self) -> str:
-        return digest({key: self.model_dump(mode="json")[key] for key in MomentumIdentity.model_fields})
+        data = self.model_dump(mode="json")
+        return digest({key: data[key] for key in MomentumIdentity.model_fields
+                       if key not in CONTRACT_BINDING_FIELDS or data[key] is not None})
+
+    @property
+    def contract_binding_status(self) -> Literal["EXACT", "LEGACY_INCOMPLETE"]:
+        return "EXACT" if self.calculation_id is not None else "LEGACY_INCOMPLETE"
 
 
 class MetricEvidence(BaseModel):
@@ -171,6 +189,10 @@ class MomentumSnapshotRecord(MomentumIdentity):
 
     def canonical_payload(self) -> str:
         data = self.model_dump(mode="json", exclude={"stored_at"})
+        # Preserve hashes of frozen v1 payloads that predate exact contract fields.
+        for key in CONTRACT_BINDING_FIELDS:
+            if data[key] is None:
+                data.pop(key)
         # Status entries and reference sets are order independent.
         data["input_references"] = sorted(set(data["input_references"]))
         for key in ("blockers", "warnings"):
@@ -192,6 +214,7 @@ class MomentumSnapshotRecord(MomentumIdentity):
     def to_dict(self) -> dict:
         return self.model_dump(mode="json") | {
             "snapshot_id": self.snapshot_id, "logical_key": self.logical_key, "revision": self.revision,
+            "contract_binding_status": self.contract_binding_status,
         }
 
 

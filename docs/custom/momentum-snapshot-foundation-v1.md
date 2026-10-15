@@ -131,6 +131,17 @@ contract closure and an explicit input/producer design, not automatic computatio
 No external GitHub reference was needed for this stage; existing project patterns
 were used. No third-party code was copied.
 
+### Additive exact Calculation/Profile binding
+
+Calculation/Profile Foundation adds optional `calculation_id`,
+`calculation_content_hash` and `score_profile_content_hash`. New exact bindings
+require Calculation ID/version/hash and selected Profile ID/version/hash; a
+disabled profile needs no hash. Old objects remain `LEGACY_INCOMPLETE`, with their
+original logical key/revision/ID preserved by omitting null added fields from
+canonical payloads. No SQLite row/table migration or default contract lookup occurs.
+`contract_binding_status=EXACT` means identity completeness, not proof of executable
+inputs or scoring. Details: [Calculation/Profile contract](momentum-calculation-score-profile-foundation-v1.md).
+
 ### Acceptance evidence (2026-10-15)
 
 - New Foundation targeted: 53 passed; related contracts/stores: 252 passed.
