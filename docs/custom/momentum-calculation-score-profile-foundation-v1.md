@@ -165,6 +165,12 @@ Next: confirm component mappings/transforms, percentile endpoints/singleton poli
 and rank tie numbering, then freeze a new complete profile. Supplier/Input Contract
 closure proceeds independently; no production calculation or implicit price-only scoring.
 
+The subsequent [Technical Score Semantics v1](momentum-technical-score-semantics-v1.md)
+closes these product-math decisions in a distinct `momentum-technical / v1.1`
+Profile. The original blocked `momentum-technical-v1 / v1` and `momentum-daily / v1`
+remain immutable with their original hashes. Pure deterministic helpers validate
+explicitly supplied inputs; production execution and supplier blockers remain BLOCKED.
+
 ## Acceptance evidence (2026-10-15)
 
 - 49 new contract/binding cases within the final 300-case related run pass,

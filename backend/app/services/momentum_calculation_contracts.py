@@ -173,7 +173,7 @@ class ScoreComponent(BaseModel):
     component_key: Label
     weight_bps: Annotated[int, Field(strict=True, ge=1, le=10000)]
     metrics: tuple[MetricReference, ...]
-    aggregation: Literal["IDENTITY", "MEAN_OF_PERCENTILES"] | None
+    aggregation: Literal["IDENTITY", "MEAN_OF_PERCENTILES", "WEIGHTED_PERCENTILES", "BOOLEAN_POINTS"] | None
     direction: Literal["HIGH", "LOW"] | None
     eligibility_requirement: Literal["ALL_REFERENCED_METRICS_READY"] = "ALL_REFERENCED_METRICS_READY"
     definition_blockers: tuple[Label, ...]
@@ -244,6 +244,39 @@ class MomentumRankingCohort(BaseModel):
         return self
 
 
+class TechnicalScoreSemantics(BaseModel):
+    """Versioned product mathematics, not permission to execute on production inputs."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    version: Literal["technical-score-semantics-v1"] = "technical-score-semantics-v1"
+    price_weights_bps: tuple[tuple[MetricKey, int], ...]
+    breakout_points: tuple[tuple[MetricKey, int], ...]
+    percentile: Literal["100*(L+(E-1)/2)/(N-1); N=1:50"] = "100*(L+(E-1)/2)/(N-1); N=1:50"
+    descending: Literal["100-ascending_score"] = "100-ascending_score"
+    cohort: Literal["FREEZE_ALL_COMPONENT_METRICS_READY_BEFORE_ANY_PERCENTILE"] = "FREEZE_ALL_COMPONENT_METRICS_READY_BEFORE_ANY_PERCENTILE"
+    input_eligibility: Literal["EXACT_INPUT_CONTRACT_SATISFIED"] = "EXACT_INPUT_CONTRACT_SATISFIED"
+    universe_eligibility: Literal["EXACT_READY_UNIVERSE_INCLUDED_MEMBERS_ONLY"] = "EXACT_READY_UNIVERSE_INCLUDED_MEMBERS_ONLY"
+    incomplete_candidate: Literal["EXCLUDE_BEFORE_PERCENTILES_WITH_COVERAGE_WARNING"] = "EXCLUDE_BEFORE_PERCENTILES_WITH_COVERAGE_WARNING"
+    score_range: tuple[Literal[0], Literal[100]] = (0, 100)
+    component_missing: Literal["NULL_NO_REDISTRIBUTION"] = "NULL_NO_REDISTRIBUTION"
+    tier_cohort: Literal["SCORE_PRESENT_AND_CHANGE_PCT_POSITIVE_AND_RETURN_5D_POSITIVE"] = "SCORE_PRESENT_AND_CHANGE_PCT_POSITIVE_AND_RETURN_5D_POSITIVE"
+    tier_order: Literal["SCORE_DESCENDING_WITHIN_TIER_ELIGIBLE_SET"] = "SCORE_DESCENDING_WITHIN_TIER_ELIGIBLE_SET"
+    tier_ties: Literal["ENTIRE_EQUAL_SCORE_GROUP_TO_HIGHER_TIER"] = "ENTIRE_EQUAL_SCORE_GROUP_TO_HIGHER_TIER"
+    tier_missing: Literal["NO_TIER_WITHOUT_CHANGING_SCORE_OR_RANK"] = "NO_TIER_WITHOUT_CHANGING_SCORE_OR_RANK"
+    arithmetic: Literal["EXACT_RATIONAL_FROM_FINITE_DECIMAL_TEXT_NO_ROUNDING"] = "EXACT_RATIONAL_FROM_FINITE_DECIMAL_TEXT_NO_ROUNDING"
+
+    @model_validator(mode="after")
+    def validate_mapping(self):
+        for values, keys, total in (
+            (self.price_weights_bps, {"return_3d", "return_5d", "return_10d"}, 10000),
+            (self.breakout_points, {"breakout_20", "breakout_60", "high_break_20", "high_break_60"}, 100),
+        ):
+            if len(values) != len(keys) or {key for key, _ in values} != keys:
+                raise ValueError("technical_metric_mapping_conflict")
+            if any(type(weight) is not int or weight <= 0 for _, weight in values) or sum(weight for _, weight in values) != total:
+                raise ValueError("technical_internal_weights_conflict")
+        return self
+
+
 class MomentumScoreProfile(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     contract_version: Literal["momentum-score-profile-v1"] = "momentum-score-profile-v1"
@@ -266,6 +299,7 @@ class MomentumScoreProfile(BaseModel):
     definition_blockers: tuple[Label, ...]
     execution_eligibility: Literal["BLOCKED"] = "BLOCKED"
     execution_blockers: tuple[Label, ...] = Field(min_length=1)
+    technical_semantics: TechnicalScoreSemantics | None = None
 
     @field_validator("score_profile_id", "score_profile_version")
     @classmethod
@@ -298,6 +332,24 @@ class MomentumScoreProfile(BaseModel):
             raise ValueError("unresolved_score_definition_requires_blockers")
         if not self.definition_blockers and not {"change_pct", "return_5d"} <= set(required):
             raise ValueError("tier_eligibility_metric_requirements_missing")
+        if any(component.aggregation in {"WEIGHTED_PERCENTILES", "BOOLEAN_POINTS"} for component in self.components) and self.technical_semantics is None:
+            raise ValueError("technical_component_semantics_required")
+        if self.technical_semantics is not None:
+            expected = {
+                "price_strength": ({"return_3d", "return_5d", "return_10d"}, "WEIGHTED_PERCENTILES", "HIGH"),
+                "volume_strength": ({"volume_ratio_20"}, "IDENTITY", "HIGH"),
+                "breakout": ({"breakout_20", "breakout_60", "high_break_20", "high_break_60"}, "BOOLEAN_POINTS", "HIGH"),
+                "volatility_quality": ({"volatility_20"}, "IDENTITY", "LOW"),
+            }
+            if set(keys) != set(expected) or any(
+                ({ref.metric_key for ref in component.metrics}, component.aggregation, component.direction) != expected[component.component_key]
+                for component in self.components
+            ):
+                raise ValueError("technical_component_mapping_conflict")
+            if self.normalization.formula_semantics != self.technical_semantics.percentile or self.normalization.singleton_policy != "NEUTRAL_0_5":
+                raise ValueError("technical_percentile_semantics_conflict")
+            if self.ranking.rank_method != "COMPETITION" or self.normalization.incomplete_universe != "BLOCKED":
+                raise ValueError("technical_cohort_or_rank_semantics_conflict")
         return self
 
     @property
@@ -306,6 +358,12 @@ class MomentumScoreProfile(BaseModel):
 
     def canonical_payload(self) -> str:
         data = self.model_dump(mode="json")
+        # Preserve the canonical bytes/hashes of already frozen legacy profiles.
+        if data["technical_semantics"] is None:
+            data.pop("technical_semantics")
+        else:
+            for key in ("price_weights_bps", "breakout_points"):
+                data["technical_semantics"][key].sort(key=lambda item: item[0])
         for key in ("required_metrics", "optional_metrics"):
             data[key].sort(key=lambda ref: ref["metric_key"])
         for component in data["components"]:
@@ -377,6 +435,38 @@ def candidate_technical_profile_v1(calculation: MomentumCalculationDefinition) -
         ranking=RankingContract(exact_comparison_keys=COMPARISON_KEYS, rank_method=None),
         definition_blockers=("component_metric_mapping_and_transform_unresolved", "percentile_formula_and_singleton_unresolved", "ranking_tie_method_unresolved"),
         execution_blockers=("score_definition_incomplete", "production_input_contract_unverified", "production_score_engine_absent"))
+
+
+def technical_profile_v1_1(calculation: MomentumCalculationDefinition) -> MomentumScoreProfile:
+    """Explicit opt-in complete definition. No startup installation or execution."""
+    if calculation.identity != candidate_calculation_v1().identity:
+        raise ValueError("exact_momentum_daily_v1_required")
+    references = {metric.metric_key: MetricReference(metric_key=metric.metric_key, metric_version=metric.metric_version,
+                                                     content_hash=metric.content_hash) for metric in calculation.metrics}
+    mappings = (
+        ("price_strength", 4000, ("return_3d", "return_5d", "return_10d"), "WEIGHTED_PERCENTILES", "HIGH"),
+        ("volume_strength", 2500, ("volume_ratio_20",), "IDENTITY", "HIGH"),
+        ("breakout", 2000, ("breakout_20", "breakout_60", "high_break_20", "high_break_60"), "BOOLEAN_POINTS", "HIGH"),
+        ("volatility_quality", 1500, ("volatility_20",), "IDENTITY", "LOW"),
+    )
+    required = {key for _, _, keys, _, _ in mappings for key in keys} | {"change_pct"}
+    return MomentumScoreProfile(
+        score_profile_id="momentum-technical", score_profile_version="v1.1", calculation=calculation.identity,
+        components=tuple(ScoreComponent(component_key=key, weight_bps=weight, metrics=tuple(references[k] for k in keys),
+                         aggregation=aggregation, direction=direction, definition_blockers=())
+                         for key, weight, keys, aggregation, direction in mappings),
+        normalization=NormalizationContract(version="endpoint-midrank-v1", formula_semantics="100*(L+(E-1)/2)/(N-1); N=1:50",
+                                            singleton_policy="NEUTRAL_0_5", incomplete_universe="BLOCKED"),
+        required_metrics=tuple(references[key] for key in sorted(required)), optional_metrics=(),
+        missing_required_status="UNAVAILABLE", missing_required_reason="required_scoring_component_unavailable",
+        tiers=TierContract(t1_bps=500, t2_bps=2000),
+        ranking=RankingContract(exact_comparison_keys=COMPARISON_KEYS, rank_method="COMPETITION"),
+        definition_blockers=(),
+        technical_semantics=TechnicalScoreSemantics(
+            price_weights_bps=(("return_3d", 2500), ("return_5d", 3500), ("return_10d", 4000)),
+            breakout_points=(("breakout_20", 25), ("breakout_60", 25), ("high_break_20", 20), ("high_break_60", 30))),
+        execution_blockers=("volume_quantity_semantics_unverified", "split_only_price_basis_unverified",
+                            "daily_finality_unverified", "historical_pit_vintage_unverified", "production_score_engine_absent"))
 
 
 class MomentumCalculationStore:
