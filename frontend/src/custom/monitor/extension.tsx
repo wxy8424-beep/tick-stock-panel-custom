@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { AlertTriangle, RadioTower, Plus, Trash2, Settings2, Zap, Bell, ListChecks, BellRing, TrendingUp, TrendingDown, Flame, Tags } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
+import { MonitorMarkets } from '@/custom/damon/monitor-preview/Presentation'
 import { EmptyState } from '@/components/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
 import { Skeleton } from '@/components/data/Skeleton'
@@ -121,6 +122,10 @@ function AlertExtTags({ ev, fields, onTagClick }: {
 }
 
 export function Monitor() {
+  return <MonitorMarkets cn={(active, controls) => <ChinaMonitor active={active} marketControls={controls} />} />
+}
+
+function ChinaMonitor({ active, marketControls }: { active: boolean; marketControls: React.ReactNode }) {
   const qc = useQueryClient()
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingRule, setEditingRule] = useState<MonitorRule | null>(null)
@@ -129,6 +134,7 @@ export function Monitor() {
   // 深链: /monitor?new=abnormal (异动监控页「告警规则」入口) → 直接弹出预置类型的编辑器
   const [searchParams, setSearchParams] = useSearchParams()
   useEffect(() => {
+    if (!active) return
     const kind = searchParams.get('new')
     if (kind === 'abnormal') {
       setEditingRule(null)
@@ -136,7 +142,7 @@ export function Monitor() {
       setEditorOpen(true)
       setSearchParams({}, { replace: true })
     }
-  }, [searchParams, setSearchParams])
+  }, [active, searchParams, setSearchParams])
 
   // 触发记录: 过滤 + 统计 (提升到主组件, 供 header 行使用)
   const [filter, setFilter] = useState<'all' | 'strategy' | 'signal' | 'price' | 'market' | 'sector' | 'abnormal' | 'volume_delta' | 'date'>('all')
@@ -193,15 +199,17 @@ export function Monitor() {
   // 离开监控页: 停止同步, 之后新增才计入未读
   const enterTsRef = useRef<number>(Date.now())
   useEffect(() => {
+    if (!active) return
     enterTsRef.current = Date.now()
     markSeen()
     return () => leaveMonitorPage()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [active])
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader showMarketSwitcher title="监控中心" subtitle="实时信号与规则管理" />
+      <PageHeader title="监控中心" subtitle="实时信号与规则管理" />
+      {marketControls}
       {realtimeUnavailable && (
         <div className="px-5 pb-1">
           <div className="mx-auto flex max-w-7xl items-center gap-2.5 rounded-xl border border-warning/30 bg-warning/[0.06] px-4 py-2.5">
@@ -263,7 +271,7 @@ export function Monitor() {
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3.5">
-              <AlertsList alertsQuery={alertsQuery} confirmClear={confirmClear} setConfirmClear={setConfirmClear} total={total} enterTs={enterTsRef.current} monitorExtFields={monitorExtFields} />
+              <AlertsList active={active} alertsQuery={alertsQuery} confirmClear={confirmClear} setConfirmClear={setConfirmClear} total={total} enterTs={enterTsRef.current} monitorExtFields={monitorExtFields} />
             </div>
           </section>
 
@@ -292,6 +300,7 @@ export function Monitor() {
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3.5">
               <RulesList
+                active={active}
                 rulesQuery={rulesQuery}
                 onEdit={(r) => { setEditingRule(r); setEditorOpen(true) }}
               />
@@ -301,14 +310,14 @@ export function Monitor() {
       </div>
 
       <RuleEditorDialog
-        open={editorOpen}
+        open={active && editorOpen}
         rule={editingRule}
         preset={editorPreset}
         onClose={() => { setEditorOpen(false); setEditingRule(null); setEditorPreset(null) }}
       />
 
       <ConfirmDialog
-        open={confirmClearRules}
+        open={active && confirmClearRules}
         title="清除全部监控规则?"
         message={`将删除全部 ${rulesCount} 条规则,此操作不可撤销。`}
         confirmText="清除"
@@ -319,7 +328,7 @@ export function Monitor() {
       />
 
       <MonitorExtConfigDialog
-        open={extConfigOpen}
+        open={active && extConfigOpen}
         fields={monitorExtFields}
         onClose={() => setExtConfigOpen(false)}
       />
@@ -337,7 +346,8 @@ function SectionHeader({ icon: Icon, title }: { icon: any; title: string }) {
 }
 
 // ── 触发记录列表 ──────────────────────────────────────
-function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs, monitorExtFields }: {
+function AlertsList({ active, alertsQuery, confirmClear, setConfirmClear, total, enterTs, monitorExtFields }: {
+  active: boolean
   alertsQuery: ReturnType<typeof useQuery>
   confirmClear: boolean
   setConfirmClear: (v: boolean) => void
@@ -665,7 +675,7 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
       )}
 
       <ConfirmDialog
-        open={confirmClear}
+        open={active && confirmClear}
         title="清空全部触发记录?"
         message={`将删除全部 ${total} 条记录,此操作不可撤销。`}
         confirmText="清空"
@@ -676,7 +686,7 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
       />
 
       <StockPreviewDialog
-        symbol={memberPreview?.symbol ?? previewEv?.symbol ?? null}
+        symbol={active ? memberPreview?.symbol ?? previewEv?.symbol ?? null : null}
         name={memberPreview?.name ?? previewEv?.name ?? undefined}
         triggerInfo={previewEv ? {
           price: previewEv.price ?? null,
@@ -691,7 +701,7 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
       />
 
       <DimensionMembersDialog
-        target={dimensionTarget}
+        target={active ? dimensionTarget : null}
         onClose={() => setDimensionTarget(null)}
         onStockClick={(symbol, name, navList) => {
           setDimensionTarget(null)
@@ -704,7 +714,8 @@ function AlertsList({ alertsQuery, confirmClear, setConfirmClear, total, enterTs
 }
 
 // ── 监控规则列表 ──────────────────────────────────────
-function RulesList({ rulesQuery, onEdit }: {
+function RulesList({ active, rulesQuery, onEdit }: {
+  active: boolean
   rulesQuery: ReturnType<typeof useQuery>
   onEdit: (rule: MonitorRule) => void
 }) {
@@ -1025,7 +1036,7 @@ function RulesList({ rulesQuery, onEdit }: {
       )}
 
       <StockPreviewDialog
-        symbol={previewSymbol}
+        symbol={active ? previewSymbol : null}
         name={previewSymbol ? symbolNames[previewSymbol] : undefined}
         navList={rulesNavItems}
         onNavigate={(sym) => setPreviewSymbol(sym)}
