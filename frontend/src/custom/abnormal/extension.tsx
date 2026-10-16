@@ -16,6 +16,7 @@ import { toNavItems, type NavItem } from '@/lib/listNav'
 import { fmtPrice, fmtPct, priceColorClass } from '@/lib/format'
 import { boardTag } from '@/components/stock-table/primitives'
 import { PageHeader } from '@/components/PageHeader'
+import { AbnormalMarkets } from '@/custom/damon/abnormal-preview/Presentation'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { useQuoteStatus } from '@/lib/useSharedQueries'
 import type { FrontendExtension } from '@/extensions/types'
@@ -76,6 +77,10 @@ const SIGNAL_META: Record<IntradaySignalKey, { label: string; cls: string }> = {
 }
 
 export function AbnormalMoves() {
+  return <AbnormalMarkets cn={(active, controls) => <ChinaAbnormal active={active} marketControls={controls} />} />
+}
+
+function ChinaAbnormal({ active, marketControls }: { active: boolean; marketControls: React.ReactNode }) {
   const [tab, setTab] = useState<AbnormalTab>('intraday')
   // navList: 弹窗切股的候选列表, 打开详情时由来源 tab 一并给出
   const [preview, setPreview] = useState<{ symbol: string; name: string; navList: NavItem[] } | null>(null)
@@ -93,7 +98,7 @@ export function AbnormalMoves() {
     // 整页占满视口: 头部/tab固定, 只有各 tab 内容区滚动
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0">
-        <PageHeader showMarketSwitcher
+        <PageHeader
           title="异动监控"
           subtitle="竞价 · 盘中 · 偏移 · 全时段异动中心"
           right={
@@ -109,6 +114,7 @@ export function AbnormalMoves() {
         />
       </div>
 
+      {marketControls}
       {/* tab 条: 交易时间线 竞价(盘前) → 盘中 → 偏移(多日) — 单行, 描述超宽截断 */}
       <div className="flex shrink-0 flex-nowrap items-center gap-3 px-5 pt-3">
         <div className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-border/50 bg-base/70 p-0.5">
@@ -146,7 +152,7 @@ export function AbnormalMoves() {
         )}
       </div>
 
-      {preview && (
+      {active && preview && (
         <StockPreviewDialog
           symbol={preview.symbol}
           name={preview.name}
