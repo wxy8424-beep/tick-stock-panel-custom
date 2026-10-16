@@ -13,6 +13,7 @@ import { fmtPrice, fmtPct, fmtBigNum, priceColorClass, formatExtNumber } from '@
 import { cn } from '@/lib/cn'
 import { computeGroupPcts, loadGroupStatsConfig, type GroupStatsConfigPatch } from '@/lib/watchlistGroupStats'
 import { PageHeader } from '@/components/PageHeader'
+import { WatchlistMarkets } from '@/custom/damon/watchlist-preview/Presentation'
 import { EmptyState } from '@/components/EmptyState'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { toNavItems, type NavItem } from '@/lib/listNav'
@@ -659,6 +660,10 @@ const StockCard = React.memo(function StockCard({
 // ===== 主页面 =====
 
 export function Watchlist() {
+  return <WatchlistMarkets cn={(active, controls) => <ChinaWatchlist active={active} marketControls={controls} />} />
+}
+
+function ChinaWatchlist({ active, marketControls }: { active: boolean; marketControls: React.ReactNode }) {
   const qc = useQueryClient()
   const [viewMode, setViewMode] = useState<'table' | 'card'>(() => {
     return (storage.watchlistView.get('table') as 'table' | 'card')
@@ -1331,7 +1336,7 @@ export function Watchlist() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="自选"
         titleExtra={
           <span className="inline-flex items-center gap-1.5">
@@ -1486,6 +1491,7 @@ export function Watchlist() {
         }
       />
 
+      {marketControls}
       {groupStatsOpen && (
         <WatchlistGroupStatsBar
           groups={groups}
@@ -1957,12 +1963,12 @@ export function Watchlist() {
       <ColumnCustomizer
         columns={columns}
         onChange={handleColumnsChange}
-        open={customizerOpen}
+        open={active && customizerOpen}
         onClose={() => setCustomizerOpen(false)}
       />
 
       <StockPreviewDialog
-        symbol={previewSymbol}
+        symbol={active ? previewSymbol : null}
         name={previewName}
         onClose={closePreview}
         navList={previewNavList.length > 0 ? previewNavList : previewNavItems}
@@ -1970,7 +1976,7 @@ export function Watchlist() {
       />
 
       <DimensionMembersDialog
-        target={dimensionTarget}
+        target={active ? dimensionTarget : null}
         onClose={() => setDimensionTarget(null)}
         onStockClick={(symbol, name, navList) => {
           setDimensionTarget(null)
@@ -1982,7 +1988,7 @@ export function Watchlist() {
       />
 
       <WatchlistImportDialog
-        open={importOpen}
+        open={active && importOpen}
         onClose={() => setImportOpen(false)}
         groupId={activeGroupId}
         groups={groups}

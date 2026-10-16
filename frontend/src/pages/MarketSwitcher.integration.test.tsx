@@ -102,16 +102,20 @@ it('direct US URL preserves US on refresh and never mounts CN query keys', async
   expect(host.querySelectorAll('[aria-label="市场选择"] button')[2].getAttribute('aria-pressed')).toBe('true')
 })
 
-it('Watchlist retains CN filters and the original query without changing on disabled clicks', async () => {
+it('Watchlist retains CN filters/query through the new isolated HK/US preview switch', async () => {
   await render(<Watchlist />, '/watchlist')
   expect(host.querySelector('h1')?.textContent).toBe('自选')
   expect(fixtures.queryKeys).toContainEqual(['watchlist'])
-  const content = host.textContent
-  const count = fixtures.queryKeys.length
-  const buttons = assertControls()
-  await act(async () => { buttons[1].click(); buttons[2].click() })
-  expect(host.textContent).toBe(content)
-  expect(fixtures.queryKeys).toHaveLength(count)
+  const cn = host.querySelector('[data-watchlist-market="CN"]')!
+  const buttons = assertControls(true, true)
+  await act(async () => buttons[1].click())
+  expect(host.querySelector('[data-watchlist-market="HK"]')?.textContent).toContain('演示数据｜非生产行情｜不构成投资信号')
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-watchlist-market="HK"] [aria-label="市场选择"] button:last-child')!.click())
+  expect(host.querySelector('[data-watchlist-market="US"]')?.textContent).toContain('美股自选 · Preview')
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-watchlist-market="US"] [aria-label="市场选择"] button')!.click())
+  expect(host.querySelector('[data-watchlist-market="CN"]')).toBe(cn)
+  expect(cn.hasAttribute('hidden')).toBe(false)
+  expect(cn.querySelector('h1')?.textContent).toBe('自选')
 })
 
 it('actual Settings page keeps its settings content without market controls', async () => {
