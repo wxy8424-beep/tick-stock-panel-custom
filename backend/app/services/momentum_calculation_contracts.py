@@ -16,7 +16,7 @@ from app.services.momentum_universes import MomentumUniverseIdentity
 MetricKey = Literal[
     "change_pct", "consecutive_up_days", "return_3d", "return_5d", "return_10d",
     "breakout_20", "breakout_60", "high_break_20", "high_break_60",
-    "volatility_20", "volatility_status", "volume_ratio_20",
+    "volatility_20", "volatility_status", "volume_ratio_20", "volatility_trend_status",
 ]
 COMPARISON_KEYS = (
     "market", "trading_date", "universe_id", "universe_version", "universe_content_hash",
@@ -61,7 +61,7 @@ class MomentumMetricDefinition(BaseModel):
     calendar_requirement: Literal["EXACT_IMMUTABLE_SESSION_SEQUENCE"]
     finality_requirement: Literal["COMPLETED_FINAL_DAILY_SESSIONS"]
     pit_requirement: Literal["INPUT_KNOWN_BY_KNOWLEDGE_CUTOFF"]
-    output_type: Literal["FRACTION", "COUNT", "BOOLEAN", "NON_ANNUALIZED_LOG_STD", "QUALITY_STATUS", "RATIO"]
+    output_type: Literal["FRACTION", "COUNT", "BOOLEAN", "NON_ANNUALIZED_LOG_STD", "QUALITY_STATUS", "RATIO", "VOLATILITY_TREND"]
     nullable: Literal[True] = True
     missing_input: MissingInputContract
     definition_blockers: tuple[Label, ...] = ()
@@ -467,6 +467,28 @@ def technical_profile_v1_1(calculation: MomentumCalculationDefinition) -> Moment
             breakout_points=(("breakout_20", 25), ("breakout_60", 25), ("high_break_20", 20), ("high_break_60", 30))),
         execution_blockers=("volume_quantity_semantics_unverified", "split_only_price_basis_unverified",
                             "daily_finality_unverified", "historical_pit_vintage_unverified", "production_score_engine_absent"))
+
+
+def calculation_with_trend_v1_1() -> MomentumCalculationDefinition:
+    """Add one indicator; retain all twelve v1 metric definitions byte-for-byte."""
+    base = candidate_calculation_v1()
+    sigma = next(metric for metric in base.metrics if metric.metric_key == "volatility_20")
+    trend = sigma.model_dump() | dict(
+        metric_key="volatility_trend_status", output_type="VOLATILITY_TREND", required_history_sessions=22,
+        required_inputs=("volatility_20",),
+        formula_semantics="compare sigma20(D) with sigma20(previous exact session): > EXPANDING; < CONTRACTING; == UNCHANGED; no tolerance or rounding; missing/invalid quality yields null",
+        history_rule="22 contiguous exact completed session closes; two overlapping 20-log-return sample standard deviations; no skipped sessions")
+    return MomentumCalculationDefinition(**(base.model_dump() | dict(
+        calculation_version="v1.1", metrics=(*base.metrics, MomentumMetricDefinition.model_validate(trend)))))
+
+
+def technical_profile_v1_2(calculation: MomentumCalculationDefinition) -> MomentumScoreProfile:
+    """Same scoring mathematics, explicit binding to extended Calculation v1.1."""
+    if calculation.identity != calculation_with_trend_v1_1().identity:
+        raise ValueError("exact_momentum_daily_v1_1_required")
+    payload = technical_profile_v1_1(candidate_calculation_v1()).model_dump()
+    payload.update(score_profile_version="v1.2", calculation=calculation.identity)
+    return MomentumScoreProfile.model_validate(payload)
 
 
 class MomentumCalculationStore:

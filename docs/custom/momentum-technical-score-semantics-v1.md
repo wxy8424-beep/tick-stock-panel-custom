@@ -163,6 +163,12 @@ Momentum Engine, production Score/Ranking Engine or producer was created.
 
 Technical Score Semantics CLOSED != Production Execution READY.
 
+The subsequent [Engine Foundation](momentum-calculation-engine-foundation-v1.md)
+adds an explicit `momentum-technical / v1.2` binding to extended Calculation v1.1.
+Its score mathematics are identical, and helpers explicitly accept this second
+exact identity. Existing Profile v1.1 canonical content/hash remain unchanged;
+trend is context only, with no automatic Profile upgrade or production execution.
+
 ## Validation
 
 Tests use isolated in-memory arithmetic and fixture stores only. Acceptance covers

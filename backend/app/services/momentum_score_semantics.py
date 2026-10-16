@@ -16,8 +16,10 @@ from zoneinfo import ZoneInfo
 from app.services.momentum_calculation_contracts import (
     MomentumRankingCohort,
     MomentumScoreProfile,
+    calculation_with_trend_v1_1,
     candidate_calculation_v1,
     technical_profile_v1_1,
+    technical_profile_v1_2,
 )
 from app.services.momentum_universes import MomentumUniverseDefinition
 
@@ -144,7 +146,9 @@ def validate_score_semantics(*, cohort: MomentumRankingCohort, profile: Momentum
     cohort = MomentumRankingCohort.model_validate_json(cohort.model_dump_json())
     universe = MomentumUniverseDefinition.model_validate_json(universe.model_dump_json())
     profile = MomentumScoreProfile.model_validate_json(profile.model_dump_json())
-    if profile.identity != technical_profile_v1_1(candidate_calculation_v1()).identity:
+    supported = (technical_profile_v1_1(candidate_calculation_v1()).identity,
+                 technical_profile_v1_2(calculation_with_trend_v1_1()).identity)
+    if profile.identity not in supported:
         raise ValueError("exact_technical_v1_1_profile_required_no_fallback")
     if cohort.score_profile != profile.identity or cohort.calculation != profile.calculation:
         raise ValueError("exact_calculation_profile_conflict")
