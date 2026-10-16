@@ -1,4 +1,4 @@
-import { MarketSwitcherBar } from '@/components/MarketSwitcher'
+import { EnvironmentMarkets } from '@/custom/damon/environment-preview/Presentation'
 /**
  * 市场环境(Regime)页 — 每日环境状态时序趋势 + 状态分布。
  *
@@ -139,6 +139,10 @@ const cardCls = 'rounded-card border border-border bg-surface/80 shadow-[0_1px_2
 
 // ── 主组件 ────────────────────────────────────────────────
 export function Regime() {
+  return <EnvironmentMarkets cn={(active, controls) => <ChinaRegime active={active} marketControls={controls} />} />
+}
+
+function ChinaRegime({ active, marketControls }: { active: boolean; marketControls: ReactNode }) {
   const qc = useQueryClient()
   const [range, setRange] = useState<RangePreset>('1y')
   // 视图 tab: 市场环境(状态/趋势/日历) 与 情绪周期(阶段/主线) 两组内容同页切换,
@@ -706,7 +710,7 @@ export function Regime() {
         </div>
       </div>
 
-      <MarketSwitcherBar className="rounded-card border px-4" />
+      {marketControls}
 
       {/* ── 视图切换: 市场环境 / 情绪周期 (两组内容 tab 隔离, 减少单页高度) ── */}
       <div className="flex items-center gap-2">
@@ -1263,7 +1267,7 @@ export function Regime() {
       </div>{/* /市场环境 tab */}
 
       {/* ── 自定义天数弹窗 ── */}
-      {customOpen && (
+      {active && customOpen && (
         <CustomDaysModal
           current={typeof range === 'object' ? range.custom : 120}
           onClose={() => setCustomOpen(false)}
