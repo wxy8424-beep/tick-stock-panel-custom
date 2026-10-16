@@ -26,6 +26,7 @@ import { StockPreviewDialog } from '@/components/StockPreviewDialog'
 import { boardTag } from '@/components/stock-table/primitives'
 import { fmtBigNum } from '@/lib/format'
 import { PageHeader } from '@/components/PageHeader'
+import { ReviewMarkets } from '@/custom/damon/review-preview/Presentation'
 import { MarkdownRenderer } from '@/components/financials/MarkdownRenderer'
 import { toast } from '@/components/Toast'
 import { usePreferences } from '@/lib/useSharedQueries'
@@ -71,6 +72,10 @@ function fmtArchivedAt(iso: string): string {
 // Phase 类型复用 store 的定义(单一来源)
 
 export function ReviewPage() {
+  return <ReviewMarkets cn={(active, controls) => <ChinaReview active={active} marketControls={controls} />} />
+}
+
+function ChinaReview({ active, marketControls }: { active: boolean; marketControls: React.ReactNode }) {
   const qc = useQueryClient()
   // 复盘日期:当前固定取最新交易日(后续如需日期选择可改回 useState)
   const asOf: string | undefined = undefined
@@ -248,7 +253,7 @@ export function ReviewPage() {
 
   return (
     <>
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="AI 复盘"
         titleExtra={<Sparkles className="h-4 w-4 text-accent" />}
         subtitle={`${displayDate}${data?.emotion ? ` · 情绪 ${data.emotion.label}` : ''}`}
@@ -294,6 +299,7 @@ export function ReviewPage() {
         }
       />
 
+      {marketControls}
       <div className="min-h-full bg-[radial-gradient(circle_at_15%_-5%,rgba(59,130,246,0.10),transparent_30%),radial-gradient(circle_at_85%_5%,rgba(139,92,246,0.08),transparent_30%)] px-4 py-4 sm:px-6">
         <div className="mx-auto max-w-[1280px] space-y-3">
 
@@ -376,7 +382,7 @@ export function ReviewPage() {
 
       {/* ===== 定时复盘设置弹窗 ===== */}
       <AnimatePresence>
-        {showSchedule && (
+        {active && showSchedule && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -612,7 +618,7 @@ export function ReviewPage() {
 
       {/* 个股日 K 详情 (龙虎榜单点击打开) */}
       <StockPreviewDialog
-        symbol={previewSymbol}
+        symbol={active ? previewSymbol : null}
         triggerInfo={null}
         onClose={() => setPreviewSymbol(null)}
       />
