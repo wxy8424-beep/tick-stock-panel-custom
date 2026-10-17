@@ -153,7 +153,7 @@ export const router = createBrowserRouter([
         return {
           path: route.path.slice(1),
           element: (
-            <ExtensionBoundary extensionId={route.extensionId}>
+            <ExtensionBoundary key={route.id} extensionId={route.extensionId}>
               <ExtensionPage />
             </ExtensionBoundary>
           ),
