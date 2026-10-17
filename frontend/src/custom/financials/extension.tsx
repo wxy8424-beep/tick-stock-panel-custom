@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { RefreshCw, Download, Lock, Loader2, X, Search, FileText, Database, Clock, CheckCircle2, Hourglass, Lightbulb, ExternalLink, ChartPie } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
@@ -15,6 +15,7 @@ import { fmtBigNum } from '@/lib/format'
 import { toast } from '@/components/Toast'
 import type { FrontendExtension } from '@/extensions/types'
 import { IconFinancials } from '@/components/BrandIcons'
+import { FinancialMarkets } from '@/custom/damon/financial-preview/Presentation'
 
 const TABLE_LABELS: Record<string, string> = {
   metrics: '核心指标',
@@ -33,6 +34,10 @@ const TABLE_ICON: Record<string, typeof FileText> = {
 }
 
 export function Financials() {
+  return <FinancialMarkets cn={controls => <ChinaFinancials marketControls={controls} />} />
+}
+
+function ChinaFinancials({ marketControls }: { marketControls: ReactNode }) {
   const { data: caps } = useCapabilities()
   const { data: matrix } = useCapabilityMatrix()
   const { data: status, isLoading } = useFinancialStatus()
@@ -70,7 +75,8 @@ export function Financials() {
   if (!hasFinancial) {
     return (
       <>
-        <PageHeader showMarketSwitcher title="财务分析" subtitle="利润表 / 资负表 / 现金流 / 关键指标 / 股本 / AI分析" />
+        <PageHeader title="财务分析" subtitle="利润表 / 资负表 / 现金流 / 关键指标 / 股本 / AI分析" />
+        {marketControls}
         <div className="px-8 py-10">
           <div className="mx-auto max-w-md rounded-card border border-warning/30 bg-warning/[0.04] p-8 text-center">
             <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-warning/10">
@@ -171,7 +177,7 @@ export function Financials() {
 
   return (
     <>
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="财务分析"
         subtitle="利润表 / 资负表 / 现金流 / 关键指标 / 股本 / AI分析"
         right={
@@ -202,6 +208,7 @@ export function Financials() {
         }
       />
 
+      {marketControls}
       <div className="px-3 sm:px-8 py-6 space-y-6 max-w-7xl">
         {syncing && (
           <div className="flex items-center gap-2 rounded-card border border-accent/30 bg-accent/[0.06] px-3 py-2 text-xs text-accent">
