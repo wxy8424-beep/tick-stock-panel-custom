@@ -1,13 +1,16 @@
 """实时入口的市场隔离行为; 不依赖行情权限或网络。"""
-from datetime import datetime, time
+from datetime import UTC, date, datetime, time
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
 
 import app.services.quote_service as qs_module
-from app.market_time import CN_TZ, cn_today
+from app.market_time import CN_TZ
 from app.services.quote_service import QuoteService
 from app.tickflow.repository import DataStore, KlineRepository
+
+DAY = date(2026, 9, 16)
 
 
 def _record(symbol, timestamp=None, **metadata):
@@ -20,7 +23,7 @@ def _record(symbol, timestamp=None, **metadata):
 
 
 def _boundary():
-    return int(datetime.combine(cn_today(), time(15), tzinfo=CN_TZ).timestamp() * 1000)
+    return int(datetime.combine(DAY, time(15), tzinfo=CN_TZ).timestamp() * 1000)
 
 
 @pytest.fixture
@@ -29,6 +32,7 @@ def service(tmp_path, monkeypatch):
     qs = QuoteService()
     qs._repo = repo
     events = {"enriched": [], "monitors": [], "volume": [], "broadcast": []}
+    monkeypatch.setattr(qs_module, "cn_today", lambda: DAY)
     monkeypatch.setattr(qs_module, "_persist_last_fetch", lambda ms: None)
     monkeypatch.setattr(qs, "_cleanup_day_scoped_state", lambda: None)
     monkeypatch.setattr(qs, "_update_volume_delta", lambda rows, ts: events["volume"].extend(rows))
@@ -67,7 +71,7 @@ def test_non_cn_only_preserves_cn_state(service, monkeypatch, caplog, symbol, fi
     qs._fetched_at = 123.0
     qs._last_final_confirmed = True  # 上一轮成功不能让本轮非 CN 快照冒充成功。
     qs._index_quotes_cache = pl.DataFrame({"symbol": ["000001.SH"]})
-    daily_path = repo.store.data_dir / "kline_daily" / f"date={cn_today()}" / "part.parquet"
+    daily_path = repo.store.data_dir / "kline_daily" / f"date={DAY}" / "part.parquet"
     before = daily_path.read_bytes()
 
     with caplog.at_level("DEBUG", logger=qs_module.__name__):
@@ -136,3 +140,106 @@ def test_rejected_record_does_not_abort_valid_cn_batch(service, monkeypatch):
     assert _fetch(service, monkeypatch, rows) is True
     assert repo.get_enriched_latest()[0]["symbol"].to_list() == ["000001.SZ"]
     assert events["monitors"][0]["symbol"].to_list() == ["000001.SZ"]
+
+
+@pytest.mark.parametrize("currency", ["USD", "HKD", "UNKNOWN", "", [], {}, True, 123])
+def test_explicit_incompatible_cn_currency_cannot_write_or_confirm(
+    service, monkeypatch, caplog, currency,
+):
+    qs, repo, events = service
+    with caplog.at_level("WARNING", logger=qs_module.__name__):
+        assert _fetch(service, monkeypatch, [
+            _record("600519.SH", market="CN", currency=currency),
+        ], final=True) is False
+    assert qs._last_final_confirmed is False
+    assert qs._fetched_at == 0
+    assert events == {"enriched": [], "monitors": [], "volume": [], "broadcast": []}
+    assert not list(repo.store.data_dir.glob("kline*_daily/date=*/*.parquet"))
+    assert "currency" in caplog.text
+
+
+def test_conflicting_currency_timestamp_cannot_confirm_other_stale_cn(service, monkeypatch):
+    qs, repo, events = service
+    assert _fetch(service, monkeypatch, [
+        _record("000001.SZ", _boundary() - 60_000),
+        _record("600519.SH", _boundary() + 60_000, currency="USD"),
+    ], final=True) is True  # CN display freshness updates; final confirmation does not.
+    assert qs._last_final_confirmed is False
+    assert not list(repo.store.data_dir.glob("kline*_daily/date=*/*.parquet"))
+    assert events["enriched"] == events["monitors"] == events["volume"] == []
+
+
+@pytest.mark.parametrize("currency", [None, "CNY", " cny "])
+def test_compatible_or_legacy_cn_currency_preserves_values(service, monkeypatch, currency):
+    qs, repo, events = service
+    cn = _record("600519.SH", currency=currency)
+    expected = qs._build_daily([cn])
+    assert _fetch(service, monkeypatch, [cn, _record("700.HK", currency="HKD"),
+                                        _record("AAPL.US", currency="USD")], final=True)
+    actual = pl.read_parquet(repo.store.data_dir / "kline_daily" / f"date={DAY}" / "part.parquet")
+    assert actual.equals(expected)
+    assert events["monitors"][0].equals(expected)
+    assert qs._last_final_confirmed is True
+    assert {r["market"] for r in qs.get_non_cn_quotes()} == {"HK", "US"}
+
+
+def test_tickflow_adapter_preserves_identity_metadata_before_guard(service, monkeypatch):
+    from app.services import preferences
+    from app.tickflow import client
+
+    qs, _, events = service
+    row = _record("600519.SH", market="CN", currency="USD", timezone="UTC")
+    monkeypatch.setattr(preferences, "get_realtime_data_provider", lambda: "tickflow")
+    monkeypatch.setattr(preferences, "get_realtime_pull_stock", lambda: True)
+    monkeypatch.setattr(preferences, "get_realtime_pull_etf", lambda: False)
+    fake = SimpleNamespace(quotes=SimpleNamespace(
+        get_by_universes=lambda **kwargs: [row], get=lambda **kwargs: [],
+    ))
+    monkeypatch.setattr(client, "get_paid_realtime_client", lambda: fake)
+    archived = []
+    monkeypatch.setattr(qs, "_archive_records", lambda rows, provider: archived.extend(rows))
+    assert qs._fetch_quotes(final=True, final_boundary_ms=_boundary()) is False
+    assert archived[0]["currency"] == "USD"
+    assert archived[0]["timezone"] == "UTC"
+    assert qs._last_final_confirmed is False
+    assert events["enriched"] == events["monitors"] == events["volume"] == []
+
+
+def test_duplicate_cn_rows_keep_existing_semantics_and_foreign_does_not_add_rows(service, monkeypatch):
+    qs, repo, events = service
+    cn = [_record("600519.SH"), _record("600519.SH")]
+    expected = qs._build_daily(cn)
+    assert _fetch(service, monkeypatch, [*cn, _record("AAPL.US"), _record("AAPL.US")])
+    actual = pl.read_parquet(repo.store.data_dir / "kline_daily" / f"date={DAY}" / "part.parquet")
+    assert actual.equals(expected)  # No new deduplication or winner selection in this change.
+    assert events["monitors"][0].equals(expected)
+    assert len(qs.get_non_cn_quotes()) == 1
+
+
+def test_cn_date_uses_beijing_day_and_foreign_midnight_cannot_supply_cn_bar(service, monkeypatch):
+    qs, repo, events = service
+    # 16:00 UTC is the next Beijing day. Keep the original CN date filter.
+    old = int(datetime(2026, 9, 15, 15, 59, tzinfo=UTC).timestamp() * 1000)
+    current = int(datetime(2026, 9, 15, 16, 0, tzinfo=UTC).timestamp() * 1000)
+    future = int(datetime(2026, 9, 16, 16, 0, tzinfo=UTC).timestamp() * 1000)
+    rows = [_record("600519.SH", old), _record("000001.SZ", current),
+            _record("430047.BJ", future), _record("AAPL.US", future)]
+    assert _fetch(service, monkeypatch, rows)
+    actual = pl.read_parquet(repo.store.data_dir / "kline_daily" / f"date={DAY}" / "part.parquet")
+    assert actual["symbol"].to_list() == ["000001.SZ"]
+    assert actual["date"].to_list() == [DAY]
+    assert events["monitors"][0].equals(actual)
+    assert qs.get_non_cn_quotes()[0]["symbol"] == "AAPL.US"
+
+
+def test_archive_remains_independent_market_history_in_temporary_sqlite(tmp_path):
+    from app.services.snapshot_archive import SnapshotArchive
+
+    archive = SnapshotArchive(tmp_path)
+    rows = [_record("600519.SH", currency="CNY"), _record("700.HK", currency="HKD"),
+            _record("AAPL.US", currency="USD"), _record("ABC.UNKNOWN")]
+    received = datetime.combine(DAY, time(15, 1), tzinfo=CN_TZ).astimezone(UTC)
+    assert archive.append(rows, received, "fixture-provider") == 3
+    for market, symbol in [("CN", "600519.SH"), ("HK", "700.HK"), ("US", "AAPL.US")]:
+        assert [r["symbol"] for r in archive.query(market=market)] == [symbol]
+    assert archive.path.is_relative_to(tmp_path)

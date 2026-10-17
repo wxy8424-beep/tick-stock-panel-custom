@@ -921,7 +921,9 @@ class QuoteService:
                 "timestamp": q.get("timestamp"),
                 "session": q.get("session"),
                 # 保留源头的可选市场声明, 避免解析时抹掉与 symbol 冲突的元数据。
-                **{key: q[key] for key in ("market", "region", "exchange") if key in q},
+                **{key: q[key] for key in (
+                    "market", "region", "exchange", "currency", "timezone",
+                ) if key in q},
             })
 
         self._archive_records(records, "tickflow")
@@ -935,6 +937,7 @@ class QuoteService:
 
         CN 使用当前六位数字 + SH/SZ/BJ 的证券格式, 资产分类仍由原有维表负责。
         可选 market/region 声明必须与后缀一致, CN exchange 必须与后缀一致。
+        CN 显式币种只接受 CNY; 缺失沿用旧契约, 不推断币种或执行换汇。
         未知或冲突记录不进入任何分组; 日志不输出原始行情或元数据。
         """
         groups: dict[str, list[dict]] = {"CN": [], "HK": [], "US": []}
@@ -962,6 +965,11 @@ class QuoteService:
                         not isinstance(exchange, str) or exchange.strip().upper() != suffix
                     ):
                         reason = "exchange 与 CN symbol 后缀冲突"
+                    currency = record.get("currency")
+                    if reason is None and market == "CN" and currency is not None and (
+                        not isinstance(currency, str) or currency.strip().upper() != "CNY"
+                    ):
+                        reason = "currency 与 CN 人民币链路冲突或声明未知"
                     if reason is None:
                         groups[market].append(record)
                         continue
