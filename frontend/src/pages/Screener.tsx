@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { ScanSearch, Clock, TrendingUp, Star, Filter, Layers, Network, Sparkles, RefreshCw, Settings2, Store, RotateCcw, X, SlidersHorizontal } from 'lucide-react'
@@ -11,6 +11,7 @@ import { useWatchlistBatchAdd } from '@/lib/useSharedMutations'
 import { QK } from '@/lib/queryKeys'
 import { storage } from '@/lib/storage'
 import { PageHeader } from '@/components/PageHeader'
+import { StrategyMarkets } from '@/custom/damon/strategy-preview/Presentation'
 import { EmptyState } from '@/components/EmptyState'
 import { DatePicker } from '@/components/DatePicker'
 import { StockPreviewDialog } from '@/components/StockPreviewDialog'
@@ -42,6 +43,10 @@ import {
 const SHOW_STRATEGY_STORE = false
 
 export function Screener() {
+  return <StrategyMarkets cn={controls => <ChinaScreener marketControls={controls} />} />
+}
+
+function ChinaScreener({ marketControls }: { marketControls: ReactNode }) {
   const [assetType, setAssetType] = useState<'stock' | 'etf'>('stock')
   // 周期显示筛选: 全部 / 日线 / 分钟 — 只过滤卡片显示, 不影响池和执行;
   // 执行按每个策略自己声明的 timeframes 路由 (日线走盘后缓存, 分钟走本地分钟K分区)
@@ -783,7 +788,7 @@ export function Screener() {
 
   return (
     <>
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="策略"
         subtitle="基于本地 enriched 表 · 毫秒级 SQL"
         right={
@@ -938,6 +943,7 @@ export function Screener() {
         }
       />
 
+      {marketControls}
       <div className="px-8 py-4 space-y-3">
         {/* 策略卡片 */}
         {cardSize !== 'hidden' && (
