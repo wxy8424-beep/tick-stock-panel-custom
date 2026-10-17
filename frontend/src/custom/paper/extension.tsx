@@ -28,6 +28,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { Modal } from '@/components/Modal'
 import type { FrontendExtension } from '@/extensions/types'
 import { IconPaper } from '@/components/BrandIcons'
+import { PaperMarkets } from '@/custom/damon/paper-preview/Presentation'
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
   market: '即时',
@@ -1493,7 +1494,7 @@ function SortTh({ label, sortKey, sort, onSort, align = 'left', title }: {
   )
 }
 
-function CompareView({ onCreateSingle }: { onCreateSingle: () => void }) {
+function CompareView({ onCreateSingle, marketControls }: { onCreateSingle: () => void; marketControls: ReactNode }) {
   const [createOpen, setCreateOpen] = useState(false)
   const [baseOpen, setBaseOpen] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
@@ -1545,7 +1546,7 @@ function CompareView({ onCreateSingle }: { onCreateSingle: () => void }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="模拟盘"
         subtitle="多账户并行对比 — 同本金 · 同费率 · 点表头排序, 点行展开完整账户操作"
         right={
@@ -1584,6 +1585,7 @@ function CompareView({ onCreateSingle }: { onCreateSingle: () => void }) {
           </div>
         }
       />
+      {marketControls}
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
         {cmpQ.isLoading ? (
           <div className="py-16 text-center text-sm text-muted">加载中…</div>
@@ -2074,6 +2076,10 @@ function BatchCreateModal({ onClose, onCreated }: { onClose: () => void; onCreat
 }
 
 export function Paper() {
+  return <PaperMarkets cn={controls => <ChinaPaper marketControls={controls} />} />
+}
+
+function ChinaPaper({ marketControls }: { marketControls: ReactNode }) {
   const qc = useQueryClient()
   // 新建账户草稿 id: 打开弹窗时生成, 关闭即丢弃, 不写任何持久状态。
   const [draftId, setDraftId] = useState<string | null>(null)
@@ -2081,7 +2087,7 @@ export function Paper() {
   const close = () => { setSetupOpen(false); setDraftId(null) }
   return (
     <>
-      <CompareView onCreateSingle={() => { setDraftId(genAccountId()); setSetupOpen(true) }} />
+      <CompareView marketControls={marketControls} onCreateSingle={() => { setDraftId(genAccountId()); setSetupOpen(true) }} />
       {setupOpen && (
         <Modal onClose={close} labelledBy="setup-card-title" panelClassName="w-[94vw] max-w-md bg-surface border border-border rounded-card shadow-xl">
           <SetupCard
