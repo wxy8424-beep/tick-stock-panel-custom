@@ -7,6 +7,7 @@ import { QK } from '@/lib/queryKeys'
 import { cn } from '@/lib/cn'
 import { fmtPct, fmtPrice, priceColorClass } from '@/lib/format'
 import { PageHeader } from '@/components/PageHeader'
+import { LotsMarkets } from '@/custom/damon/lots-preview/Presentation'
 import { Modal } from '@/components/Modal'
 import { DatePicker } from '@/components/DatePicker'
 import { DateShortcuts } from '@/components/DateShortcuts'
@@ -47,6 +48,10 @@ function CostPnL({ close, cost }: { close?: number; cost: number }) {
 }
 
 export function Lots() {
+  return <LotsMarkets cn={(active, controls) => <ChinaLots active={active} marketControls={controls} />} />
+}
+
+function ChinaLots({ active, marketControls }: { active: boolean; marketControls: React.ReactNode }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
   const [editing, setEditing] = useState<Lot | null>(null) // null=关闭
@@ -114,7 +119,8 @@ export function Lots() {
 
   return (
     <div className="flex flex-col h-full">
-      <PageHeader showMarketSwitcher title="持仓提醒" subtitle="记录个股 / ETF 买入批次, 自动生成止盈止损 / 到期监控规则" />
+      <PageHeader title="持仓提醒" subtitle="记录个股 / ETF 买入批次, 自动生成止盈止损 / 到期监控规则" />
+      {marketControls}
       <div className="flex-1 min-h-0 px-5 py-4">
         <div className="mx-auto max-w-5xl space-y-4">
           <div className="flex items-center justify-between">
@@ -239,10 +245,10 @@ export function Lots() {
         </div>
       </div>
 
-      {editing && <LotDialog lot={editing} onClose={() => setEditing(null)} />}
+      {active && editing && <LotDialog lot={editing} onClose={() => setEditing(null)} />}
 
       <StockPreviewDialog
-        symbol={previewSymbol}
+        symbol={active ? previewSymbol : null}
         name={previewSymbol ? symbolNames[previewSymbol] : undefined}
         navList={lotsNavItems}
         onNavigate={(sym) => setPreviewSymbol(sym)}
