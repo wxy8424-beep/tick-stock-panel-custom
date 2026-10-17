@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
@@ -59,8 +59,13 @@ import { Skeleton } from '@/components/data/Skeleton'
 import { ExtDataStatCard } from '@/components/ext-data/ExtDataStatCard'
 import { CreateExtDialog } from '@/components/ext-data/CreateExtDialog'
 import { EditExtDialog } from '@/components/ext-data/EditExtDialog'
+import { DataMarkets } from '@/custom/damon/data-preview/Presentation'
 
 export function Data() {
+  return <DataMarkets cn={controls => <ChinaData marketControls={controls} />} />
+}
+
+function ChinaData({ marketControls }: { marketControls: ReactNode }) {
   const qc = useQueryClient()
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const startTime = useRef<number | null>(null)
@@ -598,7 +603,7 @@ export function Data() {
   return (
     <>
       <div ref={topRef} />
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="数据"
         subtitle="本地数据画像 · 同步状态 · 历史记录"
         right={
@@ -689,6 +694,7 @@ export function Data() {
         }
       />
 
+      {marketControls}
       <div className="mx-auto px-8 py-6 space-y-6 max-w-6xl">
         {/* 无 Key 提示 —— 非阻断: 历史日K走免费通道, 实时等能力取决于所选数据源 */}
         {isNoKey && (
