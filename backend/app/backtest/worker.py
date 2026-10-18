@@ -6,6 +6,7 @@ import logging
 import multiprocessing as mp
 import os
 import queue
+import sys
 import threading
 import time
 import traceback
@@ -17,6 +18,12 @@ from pathlib import Path
 from typing import Any
 
 import psutil
+
+from app.backtest.worker_exit_diagnostics import (
+    TASK_KEY,
+    child_diagnostics,
+    parent_diagnostics,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,12 +182,38 @@ def _error_message(exc: BaseException) -> str:
     return str(exc)
 
 
+def _close_parent_queue(events) -> tuple[list[str], Exception | None]:
+    """Parent only receives: close even pre-start pipe handles, without masking errors."""
+    failed = []
+    first_error = None
+    for name, code in (("close", "queue_close_failed"), ("join_thread", "feeder_join_failed")):
+        try:
+            getattr(events, name)()
+        except Exception as exc:  # noqa: BLE001 - cleanup must preserve the original failure
+            failed.append(code)
+            if first_error is None:
+                first_error = exc
+    # Queue.close does not close its pipes when no feeder was ever started.
+    for name in ("_reader", "_writer"):
+        connection = getattr(events, name, None)
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception as exc:  # noqa: BLE001 - fixed code only, continue cleanup
+                failed.append("queue_pipe_close_failed")
+                if first_error is None:
+                    first_error = exc
+    return failed, first_error
+
+
 def _worker_entry(task: dict[str, Any], event_queue, cancel_event) -> None:
-    sampler = _PeakRssSampler()
-    sampler.start()
-    started = time.perf_counter()
+    diagnostic = child_diagnostics(task)
+    sampler = None
     store = None
     try:
+        sampler = _PeakRssSampler()
+        sampler.start()
+        started = time.perf_counter()
         from app.backtest.engine import BacktestEngine
         from app.backtest.optimizer import StrategyOptimizer
         from app.backtest.strategy import StrategyBacktestService
@@ -259,26 +292,72 @@ def _worker_entry(task: dict[str, Any], event_queue, cancel_event) -> None:
             "task_elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
         }
         _attach_worker_metrics(kind, result, metrics)
+        if diagnostic is not None:
+            diagnostic.arm_stack_dump()
+            diagnostic.mark("terminal_put_started", terminal_type="result")
         event_queue.put({"type": "result", "payload": result})
+        if diagnostic is not None:
+            diagnostic.mark("terminal_enqueued", terminal_type="result")
     except BaseException as exc:
-        with suppress(Exception):
-            sampler.stop()
+        if sampler is not None:
+            with suppress(Exception):
+                sampler.stop()
+        if diagnostic is not None:
+            diagnostic.arm_stack_dump()
+            diagnostic.mark("terminal_put_started", terminal_type="error")
         event_queue.put({
             "type": "error",
             "message": _error_message(exc),
             "traceback": traceback.format_exc(),
         })
+        if diagnostic is not None:
+            diagnostic.mark("terminal_enqueued", terminal_type="error")
     finally:
+        if diagnostic is not None:
+            diagnostic.mark("cleanup_started")
+        database_closed = store is None
         if store is not None:
+            if diagnostic is not None:
+                diagnostic.mark("duckdb_close_started")
             with suppress(Exception):
                 store.db.close()
+                database_closed = True
+            if diagnostic is not None:
+                diagnostic.mark(
+                    "duckdb_close_completed" if database_closed else "duckdb_close_failed",
+                )
         # 终态消息已入队: 显式冲刷队列后立即退出。put 只是入队, 实际写管道的
         # 是后台 feeder 线程, close+join_thread 保证消息完整落管 (否则父进程误判
         # "exited without result"); 大数据量任务再跳过解释器 teardown (GC、DuckDB
         # 线程 join、DLL 卸载), 否则收尾可达数十秒, 撞上父进程 10s 退出预算。
-        with suppress(Exception):
+        queue_joined = False
+        if diagnostic is not None:
+            diagnostic.mark("queue_close_started")
+        try:
             event_queue.close()
-            event_queue.join_thread()
+        except Exception:  # noqa: BLE001 - retain existing exit semantics, fixed diagnostics
+            if diagnostic is not None:
+                diagnostic.mark("queue_close_failed")
+        else:
+            if diagnostic is not None:
+                diagnostic.mark("queue_close_completed")
+                diagnostic.mark("feeder_join_started")
+            try:
+                event_queue.join_thread()
+            except Exception:  # noqa: BLE001 - never serialize cleanup exceptions
+                if diagnostic is not None:
+                    diagnostic.mark("feeder_join_failed")
+            else:
+                queue_joined = True
+                if diagnostic is not None:
+                    diagnostic.mark("feeder_join_completed")
+        if diagnostic is not None:
+            diagnostic.mark(
+                "cleanup_completed" if database_closed and queue_joined
+                else "cleanup_incomplete",
+            )
+            diagnostic.mark("diagnostic_cleanup_started")
+            diagnostic.close(exit_imminent=True)
         os._exit(0)
 
 
@@ -288,27 +367,34 @@ def run_worker_task(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """Run one complete task in a spawned process and wait for deterministic exit."""
-    context = mp.get_context("spawn")
-    events = context.Queue()
-    process_cancel = context.Event()
-    process = context.Process(
-        target=_worker_entry,
-        args=(task, events, process_cancel),
-        daemon=False,
-    )
-    parent_rss_before = _rss_bytes()
+    diagnostic = parent_diagnostics()
+    events = process = process_cancel = None
+    started = False
+    setup_stage = "context_create"
     try:
+        if diagnostic is not None:
+            task = {**task, TASK_KEY: str(diagnostic.directory)}
+            logger.info("Worker exit diagnostics: %s", diagnostic.directory)
+        context = mp.get_context("spawn")
+        setup_stage = "queue_create"
+        events = context.Queue()
+        setup_stage = "event_create"
+        process_cancel = context.Event()
+        setup_stage = "process_create"
+        process = context.Process(
+            target=_worker_entry,
+            args=(task, events, process_cancel),
+            daemon=False,
+        )
+        setup_stage = "rss_prepare"
+        parent_rss_before = _rss_bytes()
+        setup_stage = "process_start"
         process.start()
-    except BaseException:
-        events.close()
-        events.join_thread()
-        raise
-    result: dict[str, Any] | None = None
-    failure: dict[str, Any] | None = None
-    ipc_started = time.perf_counter()
-    cancel_started: float | None = None
-
-    try:
+        started = True
+        result: dict[str, Any] | None = None
+        failure: dict[str, Any] | None = None
+        ipc_started = time.perf_counter()
+        cancel_started: float | None = None
         while result is None and failure is None:
             if cancel_event is not None and cancel_event.is_set():
                 process_cancel.set()
@@ -351,9 +437,13 @@ def run_worker_task(
                 elif message_type == "error":
                     failure = message
 
+        exit_wait_started = diagnostic.now() if diagnostic is not None else 0.0
         process.join(timeout=10.0)
+        waited_ms = (diagnostic.now() - exit_wait_started) * 1000 if diagnostic is not None else 0.0
         worker_exit_forcibly = False
-        if process.is_alive():
+        alive_after_wait = process.is_alive()
+        exitcode_after_wait = process.exitcode
+        if alive_after_wait:
             # 终态消息 (result/error) 已完整送达, 子进程只是退出收尾慢:
             # 强制结束并继续走结果/错误处理, 不把已送达的成功结果当失败丢弃。
             process.terminate()
@@ -365,6 +455,16 @@ def run_worker_task(
                 task["kind"],
                 process.exitcode,
             )
+        # Never read/flush diagnostic files before the forced termination path.
+        if diagnostic is not None and not process.is_alive():
+            diagnostic.mark("terminal_received" if result is not None or failure is not None else "terminal_missing")
+            diagnostic.mark("exit_wait_returned", waited_ms=waited_ms,
+                            is_alive=alive_after_wait, exitcode=exitcode_after_wait,
+                            wait_started_monotonic=exit_wait_started)
+            if alive_after_wait:
+                diagnostic.mark("exit_wait_timeout", child_stage=diagnostic.child_stage(),
+                                waited_ms=waited_ms, is_alive=True, exitcode=exitcode_after_wait)
+                diagnostic.mark("termination_finished", is_alive=False, exitcode=process.exitcode)
         if failure is not None:
             raise BacktestWorkerError(
                 f"{failure.get('message', 'worker failed')}\n{failure.get('traceback', '')}".rstrip()
@@ -388,8 +488,45 @@ def run_worker_task(
             result.setdefault("worker", {}).update(parent_metrics)
         return result
     finally:
-        if process.is_alive():
-            process.terminate()
-            process.join(timeout=5.0)
-        events.close()
-        events.join_thread()
+        cleanup_failures = []
+        exitcode = None
+        try:
+            if process is not None:
+                try:
+                    if (started or getattr(process, "pid", None) is not None) and process.is_alive():
+                        process.terminate()
+                        process.join(timeout=5.0)
+                    exitcode = process.exitcode
+                except Exception:  # Preserve failure, still close remaining resources.
+                    cleanup_failures.append("process_cleanup_failed")
+                    raise
+                finally:
+                    close = getattr(process, "close", None)
+                    if close is not None:
+                        try:
+                            close()
+                        except Exception:  # noqa: BLE001 - do not prevent pipe/probe cleanup
+                            cleanup_failures.append("process_close_failed")
+                    if not started and hasattr(process, "_args"):
+                        process._args = ()
+                        process._kwargs = {}
+        finally:
+            queue_error = None
+            if events is not None:
+                queue_failures, queue_error = _close_parent_queue(events)
+                cleanup_failures.extend(queue_failures)
+            # multiprocessing.Event has no public close; release all caller-owned
+            # references, including the pre-start Process args, for SemLock cleanup.
+            close = process = process_cancel = events = None
+            if diagnostic is not None:
+                if not started:
+                    diagnostic.mark("setup_failed", reason=setup_stage)
+                for reason in cleanup_failures:
+                    diagnostic.mark("parent_cleanup_failed", reason=reason)
+                diagnostic.mark("parent_cleanup_finished" if not cleanup_failures else "parent_cleanup_incomplete",
+                                exitcode=exitcode)
+                diagnostic.close()
+            # Keep the original queue-cleanup failure behavior on a successful
+            # business path; never mask a setup/task/termination exception.
+            if queue_error is not None and sys.exception() is None:
+                raise queue_error
