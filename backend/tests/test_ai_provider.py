@@ -433,25 +433,24 @@ def test_save_ai_settings_persists_token_sizes(monkeypatch):
     saved: dict = {}
     monkeypatch.setattr(settings_api.secrets_store, "save", lambda updates: saved.update(updates))
     monkeypatch.setattr(settings_api.secrets_store, "load", lambda: saved)
-    original_output = app_settings.ai_max_output_tokens
-    original_window = app_settings.ai_context_window
-    try:
-        req = settings_api.AiSettingsIn(
-            provider="openai_compat",
-            base_url="https://example.com/v1",
-            api_key="sk-test",
-            model="gpt-x",
-            max_output_tokens=5000,
-            context_window=128000,
-        )
-        result = settings_api.save_ai_settings(req)
-        assert saved["ai_max_output_tokens"] == 5000
-        assert saved["ai_context_window"] == 128000
-        assert result["ai_max_output_tokens"] == 5000
-        assert result["ai_context_window"] == 128000
-    finally:
-        app_settings.ai_max_output_tokens = original_output
-        app_settings.ai_context_window = original_window
+    # The save endpoint updates the shared Settings object too, not just the
+    # mocked store. Restore every field changed by this request on teardown.
+    for name in ("ai_provider", "ai_base_url", "ai_api_key", "ai_model", "ai_user_agent",
+                 "ai_max_output_tokens", "ai_context_window"):
+        monkeypatch.setattr(app_settings, name, getattr(app_settings, name))
+    req = settings_api.AiSettingsIn(
+        provider="openai_compat",
+        base_url="https://example.com/v1",
+        api_key="sk-test",
+        model="gpt-x",
+        max_output_tokens=5000,
+        context_window=128000,
+    )
+    result = settings_api.save_ai_settings(req)
+    assert saved["ai_max_output_tokens"] == 5000
+    assert saved["ai_context_window"] == 128000
+    assert result["ai_max_output_tokens"] == 5000
+    assert result["ai_context_window"] == 128000
 
 
 def test_save_ai_settings_rejects_non_positive(monkeypatch):

@@ -8,6 +8,58 @@ import type { CalendarCoverage, MarketSessionInfo } from '@/lib/marketSession'
 
 const BASE = ''
 
+export interface DamonProfile {
+  profile_id: string; display_name: string; model: string
+  protocol: 'chat_completions' | 'responses'; enabled: boolean; text_stream: boolean; configured: boolean
+}
+export interface DamonMessage { role: 'user' | 'assistant'; content: string }
+export interface DamonChatInput { profile_id: string; conversation_id: string | null; messages: DamonMessage[] }
+
+/** Same-origin POST/NDJSON, centralized alongside the existing streaming clients. */
+export async function streamDamonChat(input: DamonChatInput, signal: AbortSignal, receive: (event: unknown) => void | boolean) {
+  const response = await fetch(`${BASE}/api/custom/damon/ai/chat`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input), signal,
+  })
+  if (!response.ok || !response.body) {
+    const failure = new Error(`request_failed_${response.status}`) as Error & { requestId?: string }
+    const body = await response.json().catch(() => null)
+    if (typeof body?.request_id === 'string' && /^[a-f0-9]{32}$/.test(body.request_id)) failure.requestId = body.request_id
+    throw failure
+  }
+  const reader = response.body.getReader(), decoder = new TextDecoder()
+  let buffer = '', total = 0
+  try {
+    while (true) {
+      const { value, done } = await reader.read()
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
+      total += value?.length ?? 0
+      // Bound the wire separately from each frame: one network chunk may contain
+      // many valid NDJSON lines; tiny deltas repeat the identifier envelope.
+      if (total > 8000000) throw new Error('stream_limit')
+      let newline: number
+      while ((newline = buffer.indexOf('\n')) >= 0) {
+        if (Array.from(buffer.slice(0, newline)).length > 20000) throw new Error('stream_limit')
+        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1)
+        // Only the protocol consumer can validate a terminal event. It may
+        // retire this stream without waiting for a proxy to deliver EOF.
+        if (line.trim() && receive(JSON.parse(line)) === false) return
+      }
+      if (Array.from(buffer).length > 20000) throw new Error('stream_limit')
+      if (done) {
+        if (buffer.trim()) throw new Error('incomplete_stream')
+        return
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
+}
+export const cancelDamonChat = (conversation_id: string, turn_id: string) =>
+  request<{ cleanup_state: 'finished' | 'still_running' }>('/api/custom/damon/ai/cancel', {
+    method: 'POST', body: JSON.stringify({ conversation_id, turn_id }), quiet: true, timeoutMs: 3000,
+  })
+
 export type IntelligenceStatus = 'READY' | 'PARTIAL' | 'UNAVAILABLE' | 'BLOCKED'
 export interface IntelligenceSection {
   status: IntelligenceStatus | 'NOT_SELECTED'; blocker?: string | null; source_status?: string | null; source_blocker?: string | null
@@ -2435,6 +2487,7 @@ export interface RuntimePagePack {
 
 // ===== API surface =====
 export const api = {
+  damonProfiles: () => request<{ profiles: DamonProfile[] }>('/api/custom/damon/ai/profiles', { quiet: true }),
   usDashboard: (symbol?: string) => request<USDashboardResponse>(`/api/dashboard/us${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   hkDashboard: (symbol?: string) => request<HKDashboardResponse>(`/api/dashboard/hk${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ''}`, { quiet: true, timeoutMs: 60000 }),
   health: () => request<{ status: string; version: string; mode: string }>('/health'),

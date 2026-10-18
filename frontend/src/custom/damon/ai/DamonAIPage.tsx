@@ -4,6 +4,7 @@ import { PageHeader } from '@/components/PageHeader'
 import { MarketSwitcher, type Market } from '@/components/MarketSwitcher'
 import { useMockVoice } from './useMockVoice'
 import type { CoreState } from './voice'
+import { TextChatPanel } from './TextChatPanel'
 
 type DataMode = 'real_cache' | 'historical' | 'preview' | 'simulation'
 const modes: Record<DataMode, string> = { real_cache: '真实缓存（未接入）', historical: '历史证据（未接入）', preview: '合成 Preview', simulation: '模拟事件' }
@@ -13,6 +14,20 @@ const button = `inline-flex items-center justify-center gap-2 rounded-lg border 
 interface Message { id: number; turnId?: string; role: string; text: string; market: Market; mode: DataMode }
 
 export function DamonAIPage() {
+  const [runtime, setRuntime] = useState<'mock' | 'model'>('mock')
+  return <div className="flex h-full min-h-0 flex-col bg-slate-950 text-slate-100">
+    <div className="flex flex-wrap gap-3 p-3" aria-label="运行模式">
+      <button className={button} aria-pressed={runtime === 'mock'} onClick={() => setRuntime('mock')}>离线 Mock 演示</button>
+      <button className={button} aria-pressed={runtime === 'model'} onClick={() => setRuntime('model')}>真实模型文字</button>
+    </div>
+    {runtime === 'mock' ? <DamonMockPage /> : <div className="min-h-0 flex-1 overflow-auto p-4">
+      <PageHeader title="Damon AI" subtitle="Phase 1.2 · 真实模型文字对话 · 语音及工具未接入" />
+      <TextChatPanel />
+    </div>}
+  </div>
+}
+
+function DamonMockPage() {
   const voice = useMockVoice()
   const { state } = voice
   const [market, setMarket] = useState<Market>('CN')

@@ -3,6 +3,10 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
+# Text bodies are measured in Unicode code points (Python len(str)), not UTF-16
+# units, grapheme clusters or UTF-8 bytes. The frontend uses the same 16000 limit.
+TEXT_MAX_CODE_POINTS = 16000
+
 Market = Literal["CN", "HK", "US"]
 DataMode = Literal["real_cache", "historical", "preview", "simulation"]
 TaskStatus = Literal["pending", "running", "completed", "blocked", "cancelled", "error"]

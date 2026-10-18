@@ -1,5 +1,7 @@
 # Damon AI Phase 1：独立页面与离线安全基础
 
+本文保留 Phase 1/1.1 的历史边界记录；Phase 1.2 新增的真实文字调用候选及当前安全限制见 [damon-ai-phase12.md](damon-ai-phase12.md)。下文“仅静态 status”等描述对应当时阶段。
+
 基线：`772971dbb34c8accc1cd4b684f897bb11e523190`。开发分支：`feat/damon-ai-phase1`。
 
 ## 已实现边界

@@ -19,6 +19,9 @@ from urllib.parse import urlsplit, urlunsplit
 
 from app import secrets_store
 from app.config import settings
+from app.services.ai_sdk_logging import suppress_sdk_wire_logs
+
+suppress_sdk_wire_logs()
 
 OPENAI_COMPAT_PROVIDER = "openai_compat"
 OPENAI_PROVIDER = "openai"
@@ -669,9 +672,19 @@ async def _iter_openai_text(stream) -> AsyncIterator[str]:
         raise RuntimeError("AI 服务未返回正文内容; 请检查模型配置或稍后重试")
 
 
-def _openai_client(api_key: str, timeout: float):
+def _openai_client(api_key: str, timeout: float, *, base_url: str | None = None,
+                   user_agent: str | None = None):
     from openai import AsyncOpenAI
 
+    suppress_sdk_wire_logs()
+    if base_url is not None:
+        import httpx
+
+        # Explicit per-turn configuration: no global settings, redirects or SDK retries.
+        return AsyncOpenAI(api_key=api_key, base_url=normalize_openai_base_url(base_url),
+                           timeout=timeout, max_retries=0,
+                           http_client=httpx.AsyncClient(follow_redirects=False, timeout=timeout),
+                           default_headers={"User-Agent": user_agent or "Damon"})
     user_agent = secrets_store.get_ai_config("ai_user_agent", "") or settings.ai_user_agent
     return AsyncOpenAI(
         api_key=api_key,
@@ -683,6 +696,49 @@ def _openai_client(api_key: str, timeout: float):
         max_retries=2,
         default_headers={"User-Agent": user_agent},
     )
+
+
+async def stream_snapshot_text(messages: Sequence[Message], *, api_key: str, base_url: str,
+                               model: str, protocol: str, user_agent: str,
+                               max_tokens: int, timeout: float) -> AsyncIterator[str]:
+    """Text only, explicit configuration; never reads or modifies legacy defaults."""
+    from app.services import ai_responses
+
+    if protocol not in _SUPPORTED_PROTOCOLS:
+        raise ValueError("unsupported_protocol")
+    async with _openai_client(api_key, timeout, base_url=base_url, user_agent=user_agent) as client:
+        if protocol == RESPONSES_PROTOCOL:
+            stream = await client.responses.create(model=model, input=ai_responses.chat_input(messages),
+                                                    max_output_tokens=max_tokens, stream=True)
+            iterator = ai_responses.iter_text
+        else:
+            stream = await client.chat.completions.create(model=model, messages=list(messages),
+                                                          max_tokens=max_tokens, stream=True)
+            iterator = _iter_openai_text
+        async with stream:
+            terminal = False
+
+            async def checked():
+                nonlocal terminal
+                async for chunk in stream:
+                    if protocol == RESPONSES_PROTOCOL:
+                        if getattr(chunk, "type", "") in {"response.failed", "response.incomplete", "error"}:
+                            raise RuntimeError("incomplete_stream")
+                        if getattr(chunk, "type", "") == "response.completed":
+                            terminal = getattr(getattr(chunk, "response", None), "status", "") == "completed"
+                    else:
+                        for choice in getattr(chunk, "choices", None) or []:
+                            reason = getattr(choice, "finish_reason", None)
+                            if reason:
+                                if reason != "stop":
+                                    raise RuntimeError("incomplete_stream")
+                                terminal = True
+                    yield chunk
+
+            async for delta in iterator(checked()):
+                yield delta
+            if not terminal:
+                raise RuntimeError("incomplete_stream")
 
 
 async def probe_ai_config(

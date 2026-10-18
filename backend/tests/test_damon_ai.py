@@ -293,7 +293,8 @@ def test_status_is_static_and_exposes_no_execution_endpoint(caplog):
         payload = response.json()
         assert response.status_code == 200
         assert set(payload) == {"request_id", "phase", "demo_only", "profile_ids", "voice_modes",
-                                "real_voice_available", "production_tools"}
-        assert payload["demo_only"] and not payload["production_tools"]
+                                "real_voice_available", "production_tools", "text_chat_available"}
+        assert not payload["demo_only"] and payload["text_chat_available"]
+        assert not payload["production_tools"] and not payload["real_voice_available"]
         assert client.post("/api/custom/damon/ai/tools").status_code == 404
     assert "api_key" not in response.text + caplog.text

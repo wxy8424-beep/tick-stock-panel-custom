@@ -8,6 +8,7 @@
 // ===== Query Key 工厂 =====
 
 export const QK = {
+  damonProfiles: ['damon-ai-profiles'] as const,
   anomalyRecent: (before?: number) => ['anomaly-recent', before ?? 'latest'] as const,
   anomalyHealth: ['anomaly-health'] as const,
   anomalyHistoricalContext: (id: string) => ['anomaly-historical-context', id] as const,

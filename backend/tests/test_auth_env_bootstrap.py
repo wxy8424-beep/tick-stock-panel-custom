@@ -15,6 +15,9 @@ def isolated_auth_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> Iterator[tuple[ModuleType, Path, Path]]:
+    # Settings gives process variables priority over the fixture's .env. Keep
+    # that production rule, but remove the runner's DATA_DIR for these tests.
+    monkeypatch.delenv("DATA_DIR", raising=False)
     monkeypatch.setattr(app_config.settings, "data_dir", tmp_path)
     from app.services import auth
 
@@ -22,11 +25,9 @@ def isolated_auth_store(
     env_path = tmp_path / ".env"
     monkeypatch.setattr(app_config, "_ENV_FILE", env_path)
     monkeypatch.setattr(app_config.settings, "auth_password", "")
-    auth._sessions.clear()
-    auth._configured_cache = None
+    monkeypatch.setattr(auth, "_sessions", {})
+    monkeypatch.setattr(auth, "_configured_cache", None)
     yield auth, auth_path, env_path
-    auth._sessions.clear()
-    auth._configured_cache = None
 
 
 def test_bootstrap_recovers_compose_interpolated_password_from_raw_env(
