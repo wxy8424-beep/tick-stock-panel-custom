@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Sparkles, LineChart, History as HistoryIcon, Loader2, ExternalLink, Bell, AlertTriangle } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
@@ -18,6 +18,7 @@ import {
 } from '@/lib/stockAnalysisStore'
 import type { FrontendExtension } from '@/extensions/types'
 import { IconStockFocus } from '@/components/BrandIcons'
+import { StockAnalysisMarkets } from '@/custom/damon/stock-analysis-preview/Presentation'
 
 /**
  * 个股分析页 —— 日 K + 关键价位(压力/支撑/密集区/枢轴/前高前低)+ AI 四维分析。
@@ -28,6 +29,10 @@ import { IconStockFocus } from '@/components/BrandIcons'
  *  - 报告胶囊用蓝色系,与财务分析(紫色)并存
  */
 export function StockAnalysis() {
+  return <StockAnalysisMarkets cn={controls => <ChinaStockAnalysis marketControls={controls} />} />
+}
+
+function ChinaStockAnalysis({ marketControls }: { marketControls: ReactNode }) {
   const [symbol, setSymbol] = useState<string>('')
   const [name, setName] = useState<string>('')
   const [checking, setChecking] = useState(false)
@@ -81,7 +86,7 @@ export function StockAnalysis() {
 
   return (
     <>
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="个股分析"
         subtitle="日 K · 关键价位 · AI 四维分析(技术 / 基本面 / 财务 / 消息面)"
         right={
@@ -90,6 +95,8 @@ export function StockAnalysis() {
           </div>
         }
       />
+
+      {marketControls}
 
       <div className="w-full px-8 py-6 space-y-6">
         {/* 搜索栏 */}
