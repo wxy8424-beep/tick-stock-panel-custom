@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { BookmarkCheck, Combine, LibrarySquare, PenLine, Pickaxe, Sigma } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
@@ -8,6 +8,7 @@ import { FactorEditor } from './factors/FactorEditor'
 import { FactorLibrary } from './factors/FactorLibrary'
 import { MiningWorkbench } from './backtest/MiningWorkbench'
 import { ResearchCandidatesDialog } from './backtest/ResearchCandidatesDialog'
+import { FactorMarkets } from '@/custom/damon/factor-preview/Presentation'
 
 type Tab = 'inspect' | 'library' | 'editor' | 'composite' | 'mining'
 
@@ -20,6 +21,10 @@ const TABS: Record<Tab, { title: string; icon: typeof Sigma }> = {
 }
 
 export function Factors() {
+  return <FactorMarkets cn={controls => <ChinaFactors marketControls={controls} />} />
+}
+
+function ChinaFactors({ marketControls }: { marketControls: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [candidatesOpen, setCandidatesOpen] = useState(false)
   const navigate = useNavigate()
@@ -40,7 +45,7 @@ export function Factors() {
 
   return (
     <div className="flex min-h-full flex-col bg-base xl:h-full">
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="因子"
         subtitle={<span className="hidden md:inline">{activeTab === 'library' ? '因子注册表目录' : activeTab === 'mining' ? '嵌套样本外因子与策略挖掘' : '因子研究与检验'}</span>}
         className="shrink-0 flex-wrap gap-x-4 gap-y-2 bg-base/95 px-3 lg:flex-nowrap lg:px-5"
@@ -84,6 +89,7 @@ export function Factors() {
           </div>
         )}
       />
+      {marketControls}
 
       <main className="min-h-0 flex-1 px-3 pb-3 pt-3 lg:px-4 lg:pb-4 xl:overflow-hidden">
         {activeTab === 'inspect' && <FactorDiscovery focusFactor={focusFactor} />}

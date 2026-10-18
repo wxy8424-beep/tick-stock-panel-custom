@@ -128,15 +128,25 @@ export function StockDataTable({
               return (
                 <th
                   key={col.id}
+                  scope="col"
+                  aria-sort={sortable ? (dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none') : undefined}
                   className={`${alignThClass(col.align)} ${sortable ? 'cursor-pointer select-none group' : ''}`}
                   onClick={sortable ? () => onSortToggle!(col.id) : undefined}
                 >
-                  {contentOverride !== undefined ? contentOverride : col.label}
-                  {sortable && (
-                    <span className="inline-block ml-1 text-[10px] opacity-30 group-hover:opacity-60 transition-opacity">
-                      {isSorted ? (dir === 'asc' ? '↑' : '↓') : '↕'}
-                    </span>
-                  )}
+                  {contentOverride !== undefined && contentOverride}
+                  {sortable ? (
+                    <button
+                      type="button"
+                      aria-label={`按${col.label}排序`}
+                      className="rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      onClick={event => { event.stopPropagation(); onSortToggle!(col.id) }}
+                    >
+                      {contentOverride === undefined && col.label}
+                      <span aria-hidden="true" className="inline-block ml-1 text-[10px] opacity-30 group-hover:opacity-60 transition-opacity">
+                        {isSorted ? (dir === 'asc' ? '↑' : '↓') : '↕'}
+                      </span>
+                    </button>
+                  ) : contentOverride === undefined ? col.label : null}
                 </th>
               )
             })}
