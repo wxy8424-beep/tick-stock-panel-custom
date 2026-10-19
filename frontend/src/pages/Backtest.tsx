@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { BookmarkCheck, FlaskConical, ShieldCheck } from 'lucide-react'
 import { PageHeader } from '@/components/PageHeader'
@@ -6,6 +6,7 @@ import { ResearchCandidatesDialog } from './backtest/ResearchCandidatesDialog'
 import { RobustnessValidation } from './backtest/RobustnessValidation'
 import { StrategyBacktest } from './backtest/StrategyBacktest'
 import { type ResearchCandidate } from '@/lib/api'
+import { BacktestMarkets } from '@/custom/damon/backtest-preview/Presentation'
 
 type Tab = 'strategy' | 'robustness'
 
@@ -23,6 +24,10 @@ const MODES: Record<Tab, { title: string; subtitle: string; icon: typeof FlaskCo
 }
 
 export function Backtest() {
+  return <BacktestMarkets cn={controls => <ChinaBacktest marketControls={controls} />} />
+}
+
+function ChinaBacktest({ marketControls }: { marketControls: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
   const navigate = useNavigate()
@@ -66,7 +71,7 @@ export function Backtest() {
 
   return (
     <div className="flex min-h-full flex-col bg-base">
-      <PageHeader showMarketSwitcher
+      <PageHeader
         title="回测"
         subtitle={<span className="hidden md:inline">{MODES[activeTab].subtitle}</span>}
         className="shrink-0 flex-wrap gap-x-4 gap-y-2 bg-base/95 px-3 lg:flex-nowrap lg:px-5"
@@ -110,6 +115,7 @@ export function Backtest() {
           </div>
         )}
       />
+      {marketControls}
 
       <main className="min-h-0 flex-1 px-3 pb-3 pt-3 lg:px-4 lg:pb-4">
         {activeTab === 'strategy' && (
