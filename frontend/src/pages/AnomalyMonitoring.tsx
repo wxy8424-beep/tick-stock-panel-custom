@@ -11,6 +11,7 @@ import { HistoricalContextEvidence, HistoricalContextSummary } from '@/component
 import { MarketContextEvidence, MarketContextSummary } from '@/components/anomalies/MarketContext'
 import { IntelligenceContext } from '@/components/anomalies/IntelligenceContext'
 import './AnomalyMonitoring.css'
+import { AnomaliesModes } from '@/custom/damon/anomalies-preview/Presentation'
 
 function Evidence({ event }: { event: AnomalyEvent }) {
   const history = useQuery({ queryKey: QK.anomalyHistoricalContext(event.event_id), queryFn: () => api.anomalyHistoricalContext(event.event_id),
@@ -40,6 +41,10 @@ function Evidence({ event }: { event: AnomalyEvent }) {
 }
 
 export function AnomalyMonitoring() {
+  return <AnomaliesModes live={<LiveAnomalyMonitoring />} />
+}
+
+function LiveAnomalyMonitoring() {
   const client = useQueryClient()
   const recent = useQuery({ queryKey: QK.anomalyRecent(), queryFn: () => api.anomalyRecent(), enabled: false })
   const [notice, setNotice] = useState<AnomalyEvent[]>([])
