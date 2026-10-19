@@ -672,19 +672,37 @@ async def _iter_openai_text(stream) -> AsyncIterator[str]:
         raise RuntimeError("AI 服务未返回正文内容; 请检查模型配置或稍后重试")
 
 
-def _openai_client(api_key: str, timeout: float, *, base_url: str | None = None,
-                   user_agent: str | None = None):
-    from openai import AsyncOpenAI
-
+def _openai_client(api_key: str, timeout: float, *, user_agent: str | None = None,
+                   offline_transport=None, **configuration):
     suppress_sdk_wire_logs()
-    if base_url is not None:
-        import httpx
+    if set(configuration) - {"base_url"}:
+        raise TypeError("unsupported_client_configuration")
+    if "base_url" in configuration:
+        base_url = configuration["base_url"]
+        from app.services.damon_ai.real_gate import (
+            GateClosedError,
+            evaluate,
+            http_options,
+            require_real_client,
+        )
 
-        # Explicit per-turn configuration: no global settings, redirects or SDK retries.
+        if offline_transport is None:
+            require_real_client()  # Before SDK/HTTPX construction or credential inspection.
+        import httpx
+        from openai import AsyncOpenAI
+
+        if type(offline_transport) is not httpx.MockTransport:
+            raise GateClosedError(evaluate())
+
+        # Explicit offline SDK tests only. Real egress remains denied by the gate.
         return AsyncOpenAI(api_key=api_key, base_url=normalize_openai_base_url(base_url),
                            timeout=timeout, max_retries=0,
-                           http_client=httpx.AsyncClient(follow_redirects=False, timeout=timeout),
+                           http_client=httpx.AsyncClient(transport=offline_transport, **http_options(timeout)),
                            default_headers={"User-Agent": user_agent or "Damon"})
+    if offline_transport is not None:
+        raise ValueError("offline_transport_requires_explicit_configuration")
+    from openai import AsyncOpenAI
+
     user_agent = secrets_store.get_ai_config("ai_user_agent", "") or settings.ai_user_agent
     return AsyncOpenAI(
         api_key=api_key,
@@ -700,13 +718,23 @@ def _openai_client(api_key: str, timeout: float, *, base_url: str | None = None,
 
 async def stream_snapshot_text(messages: Sequence[Message], *, api_key: str, base_url: str,
                                model: str, protocol: str, user_agent: str,
-                               max_tokens: int, timeout: float) -> AsyncIterator[str]:
+                               max_tokens: int, timeout: float, offline_transport=None) -> AsyncIterator[str]:
     """Text only, explicit configuration; never reads or modifies legacy defaults."""
     from app.services import ai_responses
+    from app.services.damon_ai.real_gate import require_real_client
+
+    if offline_transport is None:
+        require_real_client()
+    else:
+        import httpx
+
+        if type(offline_transport) is not httpx.MockTransport:
+            require_real_client()
 
     if protocol not in _SUPPORTED_PROTOCOLS:
         raise ValueError("unsupported_protocol")
-    async with _openai_client(api_key, timeout, base_url=base_url, user_agent=user_agent) as client:
+    offline = {"offline_transport": offline_transport} if offline_transport is not None else {}
+    async with _openai_client(api_key, timeout, base_url=base_url, user_agent=user_agent, **offline) as client:
         if protocol == RESPONSES_PROTOCOL:
             stream = await client.responses.create(model=model, input=ai_responses.chat_input(messages),
                                                     max_output_tokens=max_tokens, stream=True)

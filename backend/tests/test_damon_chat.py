@@ -218,7 +218,8 @@ async def test_explicit_client_disables_redirects_and_retries_without_reading_de
         raise AssertionError("explicit configuration must not read global defaults")
     monkeypatch.setattr(profiles.secrets_store, "load", forbidden)
     monkeypatch.setattr(openai, "AsyncOpenAI", lambda **kwargs: SimpleNamespace(**kwargs))
-    client = ai_provider._openai_client(KEY, 1, base_url="https://model.example/v1", user_agent="test")
+    client = ai_provider._openai_client(KEY, 1, base_url="https://model.example/v1", user_agent="test",
+                                       offline_transport=httpx.MockTransport(lambda _: httpx.Response(200)))
     try:
         assert client.max_retries == 0 and client.http_client.follow_redirects is False
         assert client.api_key == KEY
@@ -376,7 +377,8 @@ async def test_explicit_adapter_reuses_parsers_requires_terminal_and_closes_reso
     async def consume():
         return [d async for d in ai_provider.stream_snapshot_text(
             [{"role": "user", "content": "hello"}], api_key=KEY, base_url="https://model.example/v1",
-            model="explicit", protocol=protocol, user_agent="test", max_tokens=10, timeout=1)]
+            model="explicit", protocol=protocol, user_agent="test", max_tokens=10, timeout=1,
+            offline_transport=httpx.MockTransport(lambda _: httpx.Response(200)))]
     if terminal and not trailing_error:
         assert await consume() == ["answer"]
     else:

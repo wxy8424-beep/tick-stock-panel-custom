@@ -56,13 +56,6 @@ async def test_installed_sdk_logs_are_suppressed_over_offline_transport(
                                            "x-private-response": RESPONSE_BODY},
                               content="".join(f"data: {json.dumps(e)}\n\n" for e in events))
 
-    real_client = httpx.AsyncClient
-
-    class OfflineClient(real_client):
-        def __init__(self, **kwargs):
-            super().__init__(**kwargs, transport=httpx.MockTransport(respond), trust_env=False)
-
-    monkeypatch.setattr(httpx, "AsyncClient", OfflineClient)
     attempted_records = []
     real_filter = _FILTER.filter
 
@@ -81,7 +74,8 @@ async def test_installed_sdk_logs_are_suppressed_over_offline_transport(
         async for text in ai_provider.stream_snapshot_text(
                 [{"role": "user", "content": REQUEST_BODY}], api_key=FAKE_KEY,
                 base_url=f"https://offline.invalid/{URL_MARKER}/v1", model="offline-model",
-                protocol=protocol, user_agent="offline-test", max_tokens=20, timeout=1):
+                protocol=protocol, user_agent="offline-test", max_tokens=20, timeout=1,
+                offline_transport=httpx.MockTransport(respond)):
             deltas.append(text)
     except openai.BadRequestError:
         assert upstream_error
