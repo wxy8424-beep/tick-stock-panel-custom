@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { MarketSwitcherBar, type Market } from '@/components/MarketSwitcher'
 import { PageHeader } from '@/components/PageHeader'
+import { PreviewNotice, PreviewDisabledAction } from '@/components/preview/ReadOnlyPreview'
 import { EmptyState } from '@/components/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
 import { StockDataTable } from '@/components/stock-table/StockDataTable'
@@ -12,6 +13,7 @@ import { FACTOR_VIEWS, FACTOR_VIEW_LABELS, validateFactorPreview, type FactorPre
   type FactorPreviewQuality, type FactorPreviewRow, type FactorPreviewState, type FactorPreviewView } from './contract'
 
 const disclaimer = '演示因子｜合成数据｜非生产因子配置｜不产生真实信号｜不构成投资建议'
+const disabledReason = 'Preview 模式不可执行：不计算、保存、注册、发布或生成策略/信号'
 const card = 'min-w-0 rounded-xl border border-border bg-surface/40 p-4 text-xs space-y-3'
 const kinds = { base: '基础', virtual: '虚拟', composite: '复合', custom: '自定义' }
 const columns: ColumnConfig[] = [
@@ -22,10 +24,6 @@ const qualities: FactorPreviewQuality[] = ['READY', 'PARTIAL', 'UNAVAILABLE', 'B
 function Badge({ status }: { status: FactorPreviewQuality }) {
   return <span className="rounded border border-warning/30 px-2 py-0.5 text-[10px] text-warning">{status} · 限定样稿</span>
 }
-function Disabled({ children }: { children: ReactNode }) {
-  return <button disabled title="Preview 模式不可执行：不计算、保存、注册、发布或生成策略/信号" className="rounded-btn border border-border px-3 py-1 text-xs text-muted">{children}（Preview 不可执行）</button>
-}
-
 export function FactorPreview({ market, state, view = 'inspect', onView, controls }: {
   market: FactorPreviewMarket; state: FactorPreviewState; view?: FactorPreviewView
   onView?: (view: FactorPreviewView) => void; controls?: ReactNode
@@ -46,9 +44,7 @@ export function FactorPreview({ market, state, view = 'inspect', onView, control
     <PageHeader className="pl-14 md:pl-5" title={`${market} 因子 · Preview`} subtitle="固定样稿，只读展示，不注册到 Factor Engine" />
     {controls}
     <div className="space-y-4 p-3 lg:p-5">
-      <div role="note" className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm text-warning">
-        <strong>{disclaimer}</strong><p>仅用于界面验收，不是实际因子检验、FactorSnapshot、回测业绩或生产能力证明。</p>
-      </div>
+      <PreviewNotice statement={disclaimer} description="仅用于界面验收，不是实际因子检验、FactorSnapshot、回测业绩或生产能力证明。" />
       <nav aria-label="因子样稿视图" className="flex flex-wrap gap-2">
         {FACTOR_VIEWS.map(v => <button key={v} onClick={() => onView?.(v)} aria-current={v === view ? 'page' : undefined} disabled={!onView}
           className={`rounded-btn border border-border px-3 py-1.5 text-xs ${v === view ? 'bg-accent text-white' : 'text-secondary'}`}>{FACTOR_VIEW_LABELS[v]}</button>)}
@@ -87,11 +83,11 @@ export function FactorPreview({ market, state, view = 'inspect', onView, control
           </section>
           <section aria-label="当前因子样稿视图" className="space-y-2 rounded-lg border border-border p-3">
             <h3>{FACTOR_VIEW_LABELS[view]} · 只读 Preview</h3>
-            {view === 'inspect' ? <><p>合成值仅演示展示格式，无实际 IC / Rank IC / IR 或收益结果。</p><Disabled>运行检验</Disabled></>
-              : view === 'library' ? <><p>样稿身份未加入注册表；不允许修改真实生命周期或删除定义。</p><Disabled>更改因子状态</Disabled><Disabled>生成策略 / 信号</Disabled></>
-                : view === 'editor' ? <><p>仅查看上方公式元数据，不加载 edit 参数指定的真实因子，不运行 DSL。</p><Disabled>验证 / 试算公式</Disabled><Disabled>保存因子</Disabled></>
-                  : view === 'composite' ? <><p>组合权重：—（没有本样稿组合定义，不自动等权或重分配）</p><Disabled>保存组合</Disabled></>
-                    : <><p>挖掘任务：—（未创建） · 任务结果：—（不可用）；不加载 URL run / candidate 指向的真实任务。</p><Disabled>启动挖掘 / 发布候选</Disabled></>}
+            {view === 'inspect' ? <><p>合成值仅演示展示格式，无实际 IC / Rank IC / IR 或收益结果。</p><PreviewDisabledAction label="运行检验" reason={disabledReason} /></>
+              : view === 'library' ? <><p>样稿身份未加入注册表；不允许修改真实生命周期或删除定义。</p><PreviewDisabledAction label="更改因子状态" reason={disabledReason} /><PreviewDisabledAction label="生成策略 / 信号" reason={disabledReason} /></>
+                : view === 'editor' ? <><p>仅查看上方公式元数据，不加载 edit 参数指定的真实因子，不运行 DSL。</p><PreviewDisabledAction label="验证 / 试算公式" reason={disabledReason} /><PreviewDisabledAction label="保存因子" reason={disabledReason} /></>
+                  : view === 'composite' ? <><p>组合权重：—（没有本样稿组合定义，不自动等权或重分配）</p><PreviewDisabledAction label="保存组合" reason={disabledReason} /></>
+                    : <><p>挖掘任务：—（未创建） · 任务结果：—（不可用）；不加载 URL run / candidate 指向的真实任务。</p><PreviewDisabledAction label="启动挖掘 / 发布候选" reason={disabledReason} /></>}
           </section>
           <p>missing_fields: {Object.entries(detail.missing_reasons).filter(([key]) => detail[key as keyof FactorPreviewRow] === null).map(([key]) => key).join('、')}</p>
           {detail.blockers.map(reason => <p key={reason} className="text-warning">blocker: {reason}</p>)}

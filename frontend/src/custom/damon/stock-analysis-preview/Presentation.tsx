@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { MarketSwitcherBar, type Market } from '@/components/MarketSwitcher'
 import { PageHeader } from '@/components/PageHeader'
+import { PreviewNotice, PreviewDisabledAction } from '@/components/preview/ReadOnlyPreview'
 import { EmptyState } from '@/components/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
 import { StockDataTable } from '@/components/stock-table/StockDataTable'
@@ -30,7 +31,7 @@ export function StockAnalysisPreview({ market, state, controls }: { market: Anal
     <PageHeader title={`${market} 个股分析 · Preview`} subtitle="Synthetic Data · Read-only · Not production research" className="pl-14 md:pl-5" />
     {controls}
     <div className="space-y-4 p-3 lg:p-5">
-      <div role="note" className="rounded-card border border-warning/30 bg-warning/5 p-4 text-sm text-warning"><strong>{declaration}</strong><p>仅用于界面验收，不读取真实证券、行情、财务或报告。</p></div>
+      <PreviewNotice statement={declaration} description="仅用于界面验收，不读取真实证券、行情、财务或报告。" className="rounded-card border border-warning/30 bg-warning/5 p-4 text-sm text-warning" />
       {state.kind === 'loading' ? <p role="status">个股分析样稿加载中…</p> : !data ? <ErrorState title="个股分析样稿加载失败" hint="拒绝无效契约或市场；不请求真实数据补齐。" /> : <>
         <section className={card} aria-label="个股样稿来源">
           <p>交易日：{data.trading_date} · generated_at：{data.generated_at}（固定样稿编写时间）</p>
@@ -54,7 +55,7 @@ export function StockAnalysisPreview({ market, state, controls }: { market: Anal
           </section>
         </div>}
       </>}
-      <section aria-label="Preview 不可执行操作" className="flex flex-wrap gap-2">{actions.map(a => <button type="button" key={a} disabled title="Preview 模式不可执行；不连接生产分析、报告、监控或交易" className="rounded-btn border border-border px-3 py-1 text-xs text-muted">{a}（Preview 不可执行）</button>)}</section>
+      <section aria-label="Preview 不可执行操作" className="flex flex-wrap gap-2">{actions.map(a => <PreviewDisabledAction key={a} label={a} reason="Preview 模式不可执行；不连接生产分析、报告、监控或交易" />)}</section>
     </div>
   </div>
 }

@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { MarketSwitcherBar, type Market } from '@/components/MarketSwitcher'
 import { PageHeader } from '@/components/PageHeader'
+import { PreviewNotice, PreviewDisabledAction } from '@/components/preview/ReadOnlyPreview'
 import { EmptyState } from '@/components/EmptyState'
 import { ErrorState } from '@/components/ErrorState'
 import { StockDataTable } from '@/components/stock-table/StockDataTable'
@@ -32,7 +33,7 @@ export function SignalPreview({ market, state, controls }: { market: SignalMarke
     <PageHeader className="pl-14 md:pl-5" title={`${market} 信号定义 · Preview`} subtitle="仅结构化合成元数据 · 不是执行中的信号库" />
     {controls}
     <div className="space-y-4 p-3 lg:p-5">
-      <div role="note" className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-sm text-warning"><strong>{declaration}</strong><p>仅用于界面验收，不是实际信号定义、触发记录或生产能力证明。</p></div>
+      <PreviewNotice statement={declaration} description="仅用于界面验收，不是实际信号定义、触发记录或生产能力证明。" />
       {state.kind === 'loading' ? <p role="status">信号样稿加载中…</p> : !data ? <ErrorState title="信号样稿加载失败" hint="拒绝错误市场或无效契约；不回退生产信号或字段选项。" /> : <>
         <section className={card} aria-label="信号样稿概览">
           <p>交易日：{data.trading_date} · generated_at：{data.generated_at}（固定编写时间，非触发时间）</p>
@@ -60,7 +61,7 @@ export function SignalPreview({ market, state, controls }: { market: SignalMarke
           {detail.warnings.map(w => <p key={w}>warning: {w}</p>)}
         </>}</section>
       </>}
-      <section className="flex flex-wrap gap-2" aria-label="Preview 不可执行操作">{['保存', '编辑', '启停', '删除', 'AI 生成', '注册', '评估'].map(a => <button type="button" disabled key={a} title="Preview 模式不可执行；不连接生产信号、策略、回测或监控" className="rounded-btn border border-border px-3 py-1 text-xs text-muted">{a}（Preview 不可执行）</button>)}</section>
+      <section className="flex flex-wrap gap-2" aria-label="Preview 不可执行操作">{['保存', '编辑', '启停', '删除', 'AI 生成', '注册', '评估'].map(a => <PreviewDisabledAction key={a} label={a} reason="Preview 模式不可执行；不连接生产信号、策略、回测或监控" />)}</section>
     </div>
   </div>
 }
