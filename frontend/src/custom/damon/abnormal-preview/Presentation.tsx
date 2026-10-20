@@ -30,7 +30,8 @@ export function AbnormalPreview({ market, state, controls }: { market: AbnormalP
     && `${row.symbol} ${row.name}`.toLowerCase().includes(search.trim().toLowerCase())), columns)
   const detail = rows.find(row => row.sample_id === selected) ?? rows[0]
   return <div data-abnormal-preview={market} className="flex min-h-0 flex-col">
-    <PageHeader title={`${market} 异动监控 · Preview`} subtitle={`固定 Preview 交易日：${data?.trading_date ?? '—（未载入样稿）'}`}
+    <PageHeader className="pl-14 md:pl-5 max-md:flex-col max-md:items-stretch max-md:gap-2 [&>div>div]:flex-wrap md:[&>div>div]:flex-nowrap"
+      title={`${market} 异动监控 · Preview`} subtitle={`固定 Preview 交易日：${data?.trading_date ?? '—（未载入样稿）'}`}
       titleExtra={<Badge />} right={<button disabled title="Preview 模式不可执行：不创建真实告警规则" className="rounded-btn border border-border px-3 py-1 text-xs text-muted">告警规则（Preview 不可执行）</button>} />
     {controls}
     <div className="space-y-4 px-5 py-4">

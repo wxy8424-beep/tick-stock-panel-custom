@@ -168,9 +168,12 @@ function ChinaMonitor({ active, marketControls }: { active: boolean; marketContr
   const alertsQuery = useQuery({
     queryKey: [...QK.alerts(filter === 'all' ? undefined : filter), extColumnsParam ?? ''],
     queryFn: () => api.alertsList({ days: 7, limit: 500, source: filter === 'all' ? undefined : filter, extColumns: extColumnsParam }),
+    enabled: active,
+    // 隐藏时解除本页订阅；保留组件状态、缓存及其他消费者的订阅。
+    subscribed: active,
     // 10s 轮询仅作 SSE strategy_alert 事件的兜底; 后台标签页不再拉 500 条全量。
     // 非交易时段无新告警可拉, 降为 120s 探活; is_trading_hours 字段缺失时保持原频率
-    refetchInterval: () => (quoteStatus?.is_trading_hours === false ? 120_000 : 10_000),
+    refetchInterval: () => active ? (quoteStatus?.is_trading_hours === false ? 120_000 : 10_000) : false,
     // 切筛选 tab 沿用上一份同 source 记录, 整表不闪没 (跨 source 不透传)
     placeholderData: (prev: any, prevQuery: any) => {
       const prevKey = prevQuery?.queryKey as readonly unknown[] | undefined
@@ -180,7 +183,12 @@ function ChinaMonitor({ active, marketControls }: { active: boolean; marketContr
   const total = alertsQuery.data?.total ?? 0
 
   // 规则个数
-  const rulesQuery = useQuery({ queryKey: QK.monitorRules, queryFn: api.monitorRulesList })
+  const rulesQuery = useQuery({
+    queryKey: QK.monitorRules,
+    queryFn: api.monitorRulesList,
+    enabled: active,
+    subscribed: active,
+  })
   const rulesCount = rulesQuery.data?.rules.length ?? 0
 
   // 清除全部规则 (逐条删除)
@@ -420,7 +428,7 @@ function AlertsList({ active, alertsQuery, confirmClear, setConfirmClear, total,
           title="触发记录加载失败"
           hint="告警接口暂时不可用，请重试；持续失败请检查数据源配置与网络。"
           retrying={alertsQuery.isFetching}
-          onRetry={() => alertsQuery.refetch()}
+          onRetry={() => { if (active) void alertsQuery.refetch() }}
         />
       ) : events.length === 0 ? (
         <EmptyState
@@ -732,12 +740,14 @@ function RulesList({ active, rulesQuery, onEdit }: {
   const groupsQ = useQuery({
     queryKey: QK.watchlistGroups,
     queryFn: api.watchlistGroups,
-    enabled: hasGroupRules,
+    enabled: active && hasGroupRules,
+    subscribed: active,
   })
   const watchlistQ = useQuery({
     queryKey: QK.watchlist,
     queryFn: api.watchlistList,
-    enabled: hasGroupRules,
+    enabled: active && hasGroupRules,
+    subscribed: active,
   })
   const groupMeta = useMemo(() => {
     const meta: Record<string, { name: string; color: string; count: number }> = {}
@@ -763,7 +773,8 @@ function RulesList({ active, rulesQuery, onEdit }: {
   const namesQuery = useQuery({
     queryKey: ['instrument-names', allSymbols.join(',')],
     queryFn: () => api.instrumentNames(allSymbols),
-    enabled: allSymbols.length > 0,
+    enabled: active && allSymbols.length > 0,
+    subscribed: active,
     staleTime: 300000,
   })
   const symbolNames = namesQuery.data?.names ?? {}
@@ -813,7 +824,7 @@ function RulesList({ active, rulesQuery, onEdit }: {
           title="监控规则加载失败"
           hint="规则接口暂时不可用，请重试；规则配置本身不受影响。"
           retrying={rulesQuery.isFetching}
-          onRetry={() => rulesQuery.refetch()}
+          onRetry={() => { if (active) void rulesQuery.refetch() }}
         />
       ) : rules.length === 0 ? (
         <EmptyState
@@ -1151,6 +1162,7 @@ function MonitorExtConfigDialog({ open, fields, onClose }: {
     queryKey: QK.extDataSchemaAll,
     queryFn: api.extDataSchemaAll,
     enabled: open,
+    subscribed: open,
     staleTime: 60_000,
   })
   // 下拉选项: 按扩展表分组 → [{ group: 表名, options: [{value, label}] }]

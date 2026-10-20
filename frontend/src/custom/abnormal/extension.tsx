@@ -143,12 +143,12 @@ function ChinaAbnormal({ active, marketControls }: { active: boolean; marketCont
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col px-5 pb-4 pt-3">
-        {tab === 'auction' && <AuctionView onOpenStock={openStock} />}
+        {tab === 'auction' && <AuctionView active={active} onOpenStock={openStock} />}
         {tab === 'intraday' && (
-          <IntradayView onPreview={(r, navList) => openStock(r.symbol, r.name ?? undefined, navList)} />
+          <IntradayView active={active} onPreview={(r, navList) => openStock(r.symbol, r.name ?? undefined, navList)} />
         )}
         {tab === 'deviation' && (
-          <DeviationView onPreview={(r, navList) => openStock(r.symbol, r.name ?? undefined, navList)} />
+          <DeviationView active={active} onPreview={(r, navList) => openStock(r.symbol, r.name ?? undefined, navList)} />
         )}
       </div>
 
@@ -172,12 +172,16 @@ function ChinaAbnormal({ active, marketControls }: { active: boolean; marketCont
 /** 追高风险阈值: 60日回测高开≥5%子集当日开盘买 -1.97% (温和高开才是名单 alpha 来源) */
 const _BENCH_CHASE_RISK_PCT = 5
 
-function AuctionView({ onOpenStock }: {
+function AuctionView({ active, onOpenStock }: {
+  active: boolean
   onOpenStock: (symbol: string, name?: string, navList?: NavItem[]) => void
 }) {
   const q = useQuery({
     queryKey: ['auction-benchmark', 'latest'],
     queryFn: () => api.auctionBenchmark(),
+    enabled: active,
+    // 没有其他订阅者时停止重试；不取消不支持 AbortSignal 的在途请求。
+    subscribed: active,
     staleTime: 5 * 60_000,
     retry: 1,
   })
@@ -210,7 +214,7 @@ function AuctionView({ onOpenStock }: {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 overflow-y-auto">
-      <BenchmarkCard q={q} onOpenStock={onOpenStock} />
+      <BenchmarkCard active={active} q={q} onOpenStock={onOpenStock} />
 
       {/* 全市场竞价扫描: 采集任务启用后填充 (接口与批量能力已验证) */}
       <div className="rounded-card border border-dashed border-border bg-surface/50 px-4 py-4">
@@ -241,7 +245,8 @@ function AuctionView({ onOpenStock }: {
   )
 }
 
-function BenchmarkCard({ q, onOpenStock }: {
+function BenchmarkCard({ active, q, onOpenStock }: {
+  active: boolean
   q: UseQueryResult<AuctionBenchmarkPayload, Error>
   onOpenStock: (symbol: string, name?: string, navList?: NavItem[]) => void
 }) {
@@ -276,7 +281,7 @@ function BenchmarkCard({ q, onOpenStock }: {
           <Compass className="h-4 w-4 text-muted/50" />
         </span>
         <span className="text-[11px] text-muted">盘前风向标暂不可用{d?.message ? ` (${d.message.slice(0, 40)})` : ''}</span>
-        <button onClick={() => q.refetch()} className="ml-auto text-[10px] text-accent hover:underline">重试</button>
+        <button onClick={() => { if (active) void q.refetch() }} className="ml-auto text-[10px] text-accent hover:underline">重试</button>
       </div>
     )
   }
@@ -386,7 +391,8 @@ function BenchmarkCard({ q, onOpenStock }: {
 // 盘中异动 tab
 // ================================================================
 
-function IntradayView({ onPreview }: {
+function IntradayView({ active, onPreview }: {
+  active: boolean
   onPreview: (r: AbnormalIntradayRow, navList?: NavItem[]) => void
 }) {
   const [sigFilter, setSigFilter] = useState<'all' | IntradaySignalKey>('all')
@@ -399,8 +405,10 @@ function IntradayView({ onPreview }: {
   const q = useQuery({
     queryKey: QK.abnormalIntraday(500),
     queryFn: () => api.abnormalIntraday(500),
+    enabled: active,
+    subscribed: active,
     // 非交易时段盘中信号不变, 60s → 5min 兜底 (开盘后自动恢复); 字段缺失保持原频率
-    refetchInterval: () => (quoteStatus?.is_trading_hours === false ? 300_000 : REFRESH_MS),
+    refetchInterval: () => active ? (quoteStatus?.is_trading_hours === false ? 300_000 : REFRESH_MS) : false,
   })
   const data = q.data
   const counts = data?.counts ?? {}
@@ -460,7 +468,7 @@ function IntradayView({ onPreview }: {
           />
           <button
             type="button"
-            onClick={() => q.refetch()}
+            onClick={() => { if (active) void q.refetch() }}
             className="inline-flex h-7 items-center gap-1 rounded border border-border bg-base px-2 text-[11px] text-secondary transition-colors hover:text-foreground"
             title="立即刷新"
           >
@@ -508,7 +516,7 @@ function IntradayView({ onPreview }: {
                     <span className="text-xs text-secondary">盘中信号加载失败，请检查数据源与网络</span>
                     <button
                       type="button"
-                      onClick={() => q.refetch()}
+                      onClick={() => { if (active) void q.refetch() }}
                       disabled={q.isFetching}
                       className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-accent transition-colors hover:bg-elevated disabled:opacity-50"
                     >
@@ -617,7 +625,8 @@ const IntradayRowView = memo(function IntradayRowView({ row, rank, onPreview }: 
 // 偏移异动 tab (原有异动边缘监控, 逻辑保持不变)
 // ================================================================
 
-function DeviationView({ onPreview }: {
+function DeviationView({ active, onPreview }: {
+  active: boolean
   onPreview: (r: AbnormalRow, navList?: NavItem[]) => void
 }) {
   // 主开关: 默认关闭, 开启后才轮询计算 (仅控制本页计算, 后台告警由监控规则驱动)
@@ -641,9 +650,10 @@ function DeviationView({ onPreview }: {
   const overview = useQuery({
     queryKey: QK.abnormalOverview(minCloseness, 300),
     queryFn: () => api.abnormalOverview(minCloseness, 300),
-    enabled, // 关闭时零计算
+    enabled: active && enabled, // 关闭或隐藏时不启动页面级计算
+    subscribed: active,
     // 非交易时段偏离快照不变, 60s → 5min 兜底 (开盘后自动恢复); 字段缺失保持原频率
-    refetchInterval: () => (enabled && quoteStatus?.is_trading_hours !== false ? REFRESH_MS : 300_000),
+    refetchInterval: () => active && enabled ? (quoteStatus?.is_trading_hours !== false ? REFRESH_MS : 300_000) : false,
     // 拖动 closeness 滑杆换 key 时沿用上一份结果, 不整表闪空
     placeholderData: (prev: any) => prev,
   })
@@ -651,11 +661,13 @@ function DeviationView({ onPreview }: {
   const watchlist = useQuery({
     queryKey: QK.watchlist,
     queryFn: api.watchlistList,
-    enabled: watchlistOnly,
+    enabled: active && watchlistOnly,
+    subscribed: active,
     staleTime: 30_000,
   })
 
   const toggleEnabled = (v: boolean) => {
+    if (!active) return
     setEnabled(v)
     storage.abnormalEnabled.set(v)
     if (v) {
@@ -665,10 +677,10 @@ function DeviationView({ onPreview }: {
 
   const data = overview.data
   useEffect(() => {
-    if (!data) return
+    if (!active || !data) return
     setLastResult(data)
     storage.abnormalLastResult.set(data)
-  }, [data])
+  }, [active, data])
 
   // 展示数据源: 开启 → 实时结果; 关闭 → 上次计算结果 (可能为空)
   const view = enabled ? data : lastResult
@@ -812,7 +824,7 @@ function DeviationView({ onPreview }: {
               {enabled && (
                 <button
                   type="button"
-                  onClick={() => overview.refetch()}
+                  onClick={() => { if (active) void overview.refetch() }}
                   className="inline-flex h-7 items-center gap-1 rounded border border-border bg-base px-2 text-[11px] text-secondary transition-colors hover:text-foreground"
                   title="立即刷新"
                 >
@@ -945,7 +957,7 @@ function DeviationView({ onPreview }: {
                         <span className="text-xs text-secondary">偏离计算请求失败，请重试</span>
                         <button
                           type="button"
-                          onClick={() => overview.refetch()}
+                          onClick={() => { if (active) void overview.refetch() }}
                           disabled={overview.isFetching}
                           className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-accent transition-colors hover:bg-elevated disabled:opacity-50"
                         >

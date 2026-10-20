@@ -3,26 +3,42 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { AbnormalMoves } from '@/custom/abnormal/extension'
 import { AbnormalPreview } from '@/custom/damon/abnormal-preview/Presentation'
 import { loadAbnormalPreview } from '../../tests/fixtures/abnormal_preview'
 import { validateAbnormalPreview, type AbnormalPreviewData } from '@/custom/damon/abnormal-preview/contract'
 
-const state = vi.hoisted(() => ({ queries: [] as unknown[][], quote: vi.fn(), apiCall: vi.fn(), refetch: vi.fn() }))
-vi.mock('@tanstack/react-query', async original => ({ ...await original<typeof import('@tanstack/react-query')>(),
-  useQuery: ({ queryKey }: { queryKey: unknown[] }) => { state.queries.push(queryKey); return { data: undefined, isLoading: false, refetch: state.refetch } },
-}))
-vi.mock('@/lib/useSharedQueries', () => ({ useQuoteStatus: () => { state.quote(); return { data: { is_trading_hours: false } } } }))
+const state = vi.hoisted(() => ({ realQueries: false, queries: [] as unknown[][], quote: vi.fn(), apiCall: vi.fn(), refetch: vi.fn() }))
+vi.mock('@tanstack/react-query', async original => {
+  const actual = await original<typeof import('@tanstack/react-query')>()
+  return { ...actual, useQuery: (options: Parameters<typeof actual.useQuery>[0]) => {
+    if (state.realQueries) return actual.useQuery(options)
+    state.queries.push([...options.queryKey]); return { data: undefined, isLoading: false, refetch: state.refetch }
+  } }
+})
+vi.mock('@/lib/useSharedQueries', () => ({ useQuoteStatus: () => { state.quote(); return { data: { is_trading_hours: state.realQueries } } } }))
 vi.mock('@/lib/api', async original => { const actual = await original<typeof import('@/lib/api')>(); return { ...actual, api: Object.fromEntries(Object.keys(actual.api).map(key => [key, (...args: unknown[]) => state.apiCall(key, args)])) } })
 vi.mock('@/components/StockPreviewDialog', () => ({ StockPreviewDialog: () => null }))
 let host: HTMLDivElement, root: Root
-beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); localStorage.clear(); state.queries = []; vi.clearAllMocks(); host = document.createElement('div'); document.body.append(host); root = createRoot(host) })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
+let timingClient: QueryClient | undefined
+beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); localStorage.clear(); state.realQueries = false; state.queries = []; vi.clearAllMocks(); state.apiCall.mockReset(); host = document.createElement('div'); document.body.append(host); root = createRoot(host) })
+afterEach(async () => { await act(async () => root.unmount()); timingClient?.clear(); timingClient = undefined; host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
 async function render(path = '/abnormal', element = <AbnormalMoves />) {
   function Navigation() { const location = useLocation(), navigate = useNavigate(); return <><output data-location>{location.search}</output><button data-back onClick={() => navigate(-1)}>返回</button></> }
   await act(async () => root.render(<MemoryRouter initialEntries={[path]}>{element}<Navigation /></MemoryRouter>))
 }
 function active() { return host.querySelector<HTMLElement>('[data-abnormal-market]:not([hidden])')! }
+it.each(['HK', 'US'])('%s Preview header separates its narrow action and reserves menu space', async m => {
+  await render(`/abnormal?market=${m}`)
+  const header = active().querySelector('header')!
+  expect(header.querySelector('h1')?.textContent).toBe(`${m} 异动监控 · Preview`)
+  for (const token of ['pl-14', 'md:pl-5', 'max-md:flex-col', 'max-md:items-stretch', '[&>div>div]:flex-wrap', 'md:[&>div>div]:flex-nowrap']) expect(header.classList.contains(token)).toBe(true)
+  const action = header.querySelector<HTMLButtonElement>('button')!
+  expect(action.disabled).toBe(true)
+  expect(action.title).toContain('Preview 模式不可执行')
+  expect(state.apiCall).not.toHaveBeenCalled()
+})
 async function market(index: number) { await act(async () => active().querySelectorAll<HTMLButtonElement>('[aria-label="市场选择"] button')[index].click()) }
 async function search(value: string, selector = 'input') { const input = active().querySelector<HTMLInputElement>(selector)!; await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })) }) }
 async function select(label: string, value: string) { const input = active().querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!; await act(async () => { input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })) }) }
@@ -146,4 +162,97 @@ it('rejects production flags, mixed identity, nonfinite values, naive time and u
   bad(d => Object.assign(d.rows[0], { event_time: '2026-09-16 14:05:00' }))
   bad(d => Object.assign(d.rows[2], { reasons: [] }))
   bad(d => Object.assign(d.rows[3], { sample_state: 'NORMAL' }))
+})
+
+function SharedQueryProbe() {
+  useQuery({ queryKey: ['a14-shared'], queryFn: () => state.apiCall('shared', []), refetchInterval: 5000 })
+  return null
+}
+const calls = (name: string) => state.apiCall.mock.calls.filter(call => call[0] === name).length
+async function tick(ms = 20) { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) }
+async function renderTiming() {
+  vi.useFakeTimers(); state.realQueries = true
+  timingClient = new QueryClient()
+  await render('/abnormal', <QueryClientProvider client={timingClient}><AbnormalMoves /><SharedQueryProbe /></QueryClientProvider>)
+  await tick()
+}
+async function tab(text: string) {
+  await act(async () => [...active().querySelectorAll('button')].find(b => b.textContent?.includes(text))!.click())
+  await tick()
+}
+const result = { rows: [], counts: {}, bench_rt_pct: 0, asof: '2026-10-19T02:00:00Z', cache_date: '2026-10-16', includes_today: false }
+const answer = (name: string) => name === 'auctionBenchmark' ? { state: 'source_unavailable' } : name === 'watchlistList' ? { symbols: [] } : result
+it.each([1, 2])('hidden CN intraday stops polling and invalidation for market %s, retaining search', async target => {
+  state.apiCall.mockImplementation(async name => answer(name))
+  await renderTiming(); const cn = active()
+  await search('A14 retained', '[placeholder="搜索代码/名称"]')
+  const before = calls('abnormalIntraday')
+  await tick(60_100); expect(calls('abnormalIntraday')).toBeGreaterThan(before)
+  await market(target); await tick()
+  const page = calls('abnormalIntraday'), shared = calls('shared')
+  await act(async () => { await timingClient!.invalidateQueries() }); await tick(180_100)
+  expect(calls('abnormalIntraday')).toBe(page); expect(calls('shared')).toBeGreaterThan(shared)
+  await act(async () => cn.querySelector<HTMLButtonElement>('[title="立即刷新"]')!.click())
+  expect(calls('abnormalIntraday')).toBe(page)
+  await market(0); await tick()
+  expect(active()).toBe(cn)
+  expect(cn.querySelector<HTMLInputElement>('[placeholder="搜索代码/名称"]')?.value).toBe('A14 retained')
+  expect(calls('abnormalIntraday')).toBeGreaterThan(page)
+})
+it('hidden auction cannot refetch on invalidation and preserves the selected view', async () => {
+  state.apiCall.mockImplementation(async name => answer(name))
+  await renderTiming(); await tab('竞价异动')
+  const key = ['auction-benchmark', 'latest']
+  expect(timingClient!.getQueryState(key)?.status).toBe('success')
+  const before = state.apiCall.mock.calls.length
+  await market(1)
+  await act(async () => { await timingClient!.invalidateQueries({ queryKey: key }) }); await tick()
+  expect(state.apiCall.mock.calls.length).toBe(before)
+  await market(0); await tick()
+  expect(timingClient!.getQueryState(key)?.fetchStatus).toBe('idle')
+  expect(active().textContent).toContain('竞价')
+  expect(state.apiCall.mock.calls.length).toBeGreaterThan(before)
+})
+it.each([1, 2])('late deviation response is cached but not persisted in market %s; CN return resumes', async target => {
+  localStorage.setItem('abnormal_enabled', 'true')
+  let resolve!: (value: unknown) => void
+  const pending = new Promise(r => { resolve = r })
+  state.apiCall.mockImplementation(name => name === 'abnormalOverview' ? pending : Promise.resolve(answer(name)))
+  const write = vi.spyOn(Storage.prototype, 'setItem')
+  await renderTiming(); await tab('偏移异动')
+  await search('A14 deviation', '[placeholder="搜索代码/名称"]')
+  expect(calls('abnormalOverview')).toBe(1)
+  await market(target)
+  await act(async () => resolve(result)); await tick()
+  expect(timingClient!.getQueryData(['abnormal-overview', .5, 300])).toEqual(result)
+  expect(write.mock.calls.filter(call => call[0] === 'abnormal_last_result')).toHaveLength(0)
+  const shared = calls('shared')
+  await act(async () => { await timingClient!.invalidateQueries({ queryKey: ['abnormal-overview'] }) })
+  await tick(180_100)
+  expect(calls('abnormalOverview')).toBe(1); expect(calls('shared')).toBeGreaterThan(shared)
+  expect(write.mock.calls.filter(call => call[0] === 'abnormal_last_result')).toHaveLength(0)
+  await market(0); await tick()
+  expect(active().querySelector<HTMLInputElement>('[placeholder="搜索代码/名称"]')?.value).toBe('A14 deviation')
+  expect(calls('abnormalOverview')).toBeGreaterThan(1)
+  expect(write.mock.calls.filter(call => call[0] === 'abnormal_last_result').length).toBeGreaterThan(0)
+})
+it.each([1, 2])('deviation polling and watchlist filtering pause in market %s without losing CN state', async target => {
+  localStorage.setItem('abnormal_enabled', 'true')
+  state.apiCall.mockImplementation(async name => answer(name))
+  await renderTiming(); await tab('偏移异动')
+  const cn = active(), checkbox = cn.querySelector<HTMLInputElement>('[title="只看自选列表中的标的"] input')!
+  await act(async () => checkbox.click()); await tick()
+  expect(calls('watchlistList')).toBe(1)
+  const initial = calls('abnormalOverview')
+  await tick(60_100); expect(calls('abnormalOverview')).toBeGreaterThan(initial)
+  await market(target); await tick()
+  const overview = calls('abnormalOverview'), watchlist = calls('watchlistList')
+  const write = vi.spyOn(Storage.prototype, 'setItem')
+  await act(async () => { await timingClient!.invalidateQueries() }); await tick(180_100)
+  expect(calls('abnormalOverview')).toBe(overview); expect(calls('watchlistList')).toBe(watchlist)
+  expect(write).not.toHaveBeenCalled()
+  await market(0); await tick()
+  expect(active()).toBe(cn); expect(checkbox.checked).toBe(true)
+  expect(calls('abnormalOverview')).toBeGreaterThan(overview)
+  expect(calls('watchlistList')).toBeGreaterThan(watchlist)
 })

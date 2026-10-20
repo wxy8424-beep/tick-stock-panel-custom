@@ -3,31 +3,47 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { Monitor } from '@/custom/monitor/extension'
 import { MonitorPreview } from '@/custom/damon/monitor-preview/Presentation'
 import { loadMonitorPreview } from '../../tests/fixtures/monitor_preview'
 import { validateMonitorPreview, type MonitorPreviewData } from '@/custom/damon/monitor-preview/contract'
 
-const state = vi.hoisted(() => ({ queries: [] as unknown[][], mutate: vi.fn(), apiCall: vi.fn(), prefs: vi.fn(), quote: vi.fn(), seen: vi.fn(), leave: vi.fn(), reset: vi.fn() }))
-vi.mock('@tanstack/react-query', async original => ({ ...await original<typeof import('@tanstack/react-query')>(),
-  useQueryClient: () => ({ invalidateQueries: vi.fn() }),
-  useMutation: () => ({ mutate: state.mutate, isPending: false }),
-  useQuery: ({ queryKey }: { queryKey: unknown[] }) => { state.queries.push(queryKey); return { data: { alerts: [], total: 0, rules: [], items: [], groups: [], signals: [], symbols: [] }, isLoading: false, refetch: vi.fn() } },
-}))
+const state = vi.hoisted(() => ({ realQueries: false, queries: [] as unknown[][], mutate: vi.fn(), apiCall: vi.fn(), prefs: vi.fn(), quote: vi.fn(), seen: vi.fn(), leave: vi.fn(), reset: vi.fn() }))
+vi.mock('@tanstack/react-query', async original => {
+  const actual = await original<typeof import('@tanstack/react-query')>()
+  return { ...actual,
+    useQueryClient: () => state.realQueries ? actual.useQueryClient() : { invalidateQueries: vi.fn() },
+    useMutation: (options: Parameters<typeof actual.useMutation>[0]) => state.realQueries ? actual.useMutation(options) : { mutate: state.mutate, isPending: false },
+    useQuery: (options: Parameters<typeof actual.useQuery>[0]) => {
+      if (state.realQueries) return actual.useQuery(options)
+      state.queries.push([...options.queryKey]); return { data: { alerts: [], total: 0, rules: [], items: [], groups: [], signals: [], symbols: [] }, isLoading: false, refetch: vi.fn() }
+    },
+  }
+})
 vi.mock('@/lib/api', async original => { const actual = await original<typeof import('@/lib/api')>(); return { ...actual, api: Object.fromEntries(Object.keys(actual.api).map(key => [key, (...args: unknown[]) => state.apiCall(key, args)])) } })
-vi.mock('@/lib/useSharedQueries', () => ({ usePreferences: () => { state.prefs(); return { data: {} } }, useQuoteStatus: () => { state.quote(); return { data: { mode: 'none', is_trading_hours: false } } } }))
+vi.mock('@/lib/useSharedQueries', () => ({ usePreferences: () => { state.prefs(); return { data: {} } }, useQuoteStatus: () => { state.quote(); return { data: { mode: 'none', is_trading_hours: state.realQueries } } } }))
 vi.mock('@/lib/monitorBadge', () => ({ markSeen: state.seen, leaveMonitorPage: state.leave, resetBadge: state.reset }))
 vi.mock('@/components/monitor/RuleEditor', () => ({ RuleEditor: ({ preset }: { preset?: { type?: string } }) => <div data-editor>{preset?.type ?? 'CN new rule'}</div> }))
 vi.mock('@/components/StockPreviewDialog', () => ({ StockPreviewDialog: () => null }))
 vi.mock('@/components/DimensionMembersDialog', () => ({ DimensionMembersDialog: () => null }))
 let host: HTMLDivElement, root: Root
-beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); state.queries = []; vi.clearAllMocks(); host = document.createElement('div'); document.body.append(host); root = createRoot(host) })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
+let timingClient: QueryClient | undefined
+beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); state.realQueries = false; state.queries = []; vi.clearAllMocks(); state.apiCall.mockReset(); host = document.createElement('div'); document.body.append(host); root = createRoot(host) })
+afterEach(async () => { await act(async () => root.unmount()); timingClient?.clear(); timingClient = undefined; host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
 async function render(path = '/monitor', element = <Monitor />) {
   function Navigation() { const location = useLocation(), navigate = useNavigate(); return <><output data-location>{location.search}</output><button data-back onClick={() => navigate(-1)}>返回</button></> }
   await act(async () => root.render(<MemoryRouter initialEntries={[path]}>{element}<Navigation /></MemoryRouter>))
 }
 function active() { return host.querySelector<HTMLElement>('[data-monitor-market]:not([hidden])')! }
+it.each(['HK', 'US'])('%s Preview header reserves menu space and wraps only below desktop', async m => {
+  await render(`/monitor?market=${m}`)
+  const header = active().querySelector('header')!
+  expect(header.querySelector('h1')?.textContent).toBe(`${m} 监控中心 · Preview`)
+  for (const token of ['pl-14', 'md:pl-5', '[&>div>div]:flex-wrap', 'md:[&>div>div]:flex-nowrap']) expect(header.classList.contains(token)).toBe(true)
+  expect(header.textContent).toContain('PREVIEW · 合成样本')
+  expect(state.apiCall).not.toHaveBeenCalled()
+})
 async function market(index: number) { await act(async () => active().querySelectorAll<HTMLButtonElement>('[aria-label="市场选择"] button')[index].click()) }
 async function select(label: string, value: string) { const input = active().querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!; await act(async () => { input.value = value; input.dispatchEvent(new Event('change', { bubbles: true })) }) }
 async function search(value: string) { const input = active().querySelector<HTMLInputElement>('input')!; await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })) }) }
@@ -147,4 +163,95 @@ it('rejects production flags, mixed identities, wrong statistics, invalid times 
   bad(d => Object.assign(d.tasks[3], { reasons: [] }))
   bad(d => Object.assign(d.alerts[2], { reasons: [] }))
   bad(d => Object.assign(d.tasks[0], { sample_state: 'RUNNING' }))
+})
+
+// Real Query observers and fake time: page activity must not disable unrelated observers.
+function SharedQueryProbe() {
+  useQuery({ queryKey: ['a14-shared'], queryFn: () => state.apiCall('shared', []), refetchInterval: 5000 })
+  return null
+}
+const calls = (name: string) => state.apiCall.mock.calls.filter(call => call[0] === name).length
+async function tick(ms = 20) { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) }
+async function renderTiming() {
+  vi.useFakeTimers(); state.realQueries = true
+  timingClient = new QueryClient()
+  await render('/monitor', <QueryClientProvider client={timingClient}><Monitor /><SharedQueryProbe /></QueryClientProvider>)
+  await tick()
+}
+function answer(name: string) {
+  if (name === 'alertsList') return { alerts: [], total: 0 }
+  if (name === 'monitorRulesList') return { rules: [] }
+  if (name === 'customSignalsList') return { signals: [] }
+  return { groups: [], symbols: [], names: {} }
+}
+it.each([1, 2])('hidden CN monitor stops polling/invalidation for market %s and preserves filters', async target => {
+  state.apiCall.mockImplementation(async name => answer(name))
+  await renderTiming()
+  const cn = active()
+  await act(async () => [...cn.querySelectorAll('button')].find(b => b.textContent === '价格/涨跌')!.click())
+  await tick()
+  const initial = calls('alertsList')
+  await tick(10_100)
+  expect(calls('alertsList')).toBeGreaterThan(initial)
+  await market(target); await tick()
+  const page = calls('alertsList'), rules = calls('monitorRulesList'), shared = calls('shared')
+  await act(async () => { await timingClient!.invalidateQueries() })
+  await tick(30_100)
+  expect(calls('alertsList')).toBe(page); expect(calls('monitorRulesList')).toBe(rules)
+  expect(calls('shared')).toBeGreaterThan(shared)
+  await market(0); await tick()
+  expect(active()).toBe(cn)
+  expect([...cn.querySelectorAll('button')].find(b => b.textContent === '价格/涨跌')?.className).toContain('bg-accent')
+  expect(calls('alertsList')).toBeGreaterThan(page)
+})
+it('late CN rules cannot start hidden dependent metadata queries; returning CN resumes them', async () => {
+  let resolve!: (value: unknown) => void
+  const pending = new Promise(r => { resolve = r })
+  state.apiCall.mockImplementation(name => name === 'monitorRulesList' ? pending : Promise.resolve(answer(name)))
+  await renderTiming(); await market(1)
+  const rules = [
+    { id: 'a14-group', name: 'A14 group', type: 'price', enabled: true, scope: 'watchlist_group', group_id: 'a14', symbols: [], conditions: [] },
+    { id: 'a14-symbol', name: 'A14 symbol', type: 'price', enabled: true, scope: 'symbols', symbols: ['600000.SH'], conditions: [] },
+  ]
+  await act(async () => resolve({ rules })); await tick()
+  expect(timingClient!.getQueryData(['monitor-rules'])).toEqual({ rules })
+  for (const name of ['watchlistGroups', 'watchlistList', 'instrumentNames']) expect(calls(name)).toBe(0)
+  await market(0); await tick()
+  for (const name of ['watchlistGroups', 'watchlistList', 'instrumentNames']) expect(calls(name)).toBeGreaterThan(0)
+  const metadata = ['watchlistGroups', 'watchlistList', 'instrumentNames'].map(calls)
+  await market(2)
+  await act(async () => { await timingClient!.invalidateQueries() }); await tick()
+  expect(['watchlistGroups', 'watchlistList', 'instrumentNames'].map(calls)).toEqual(metadata)
+})
+it('a late failed CN request does not retry while hidden', async () => {
+  let reject!: (reason: Error) => void
+  const pending = new Promise((_resolve, fail) => { reject = fail })
+  state.apiCall.mockImplementation(name => name === 'alertsList' ? pending : Promise.resolve(answer(name)))
+  await renderTiming(); expect(calls('alertsList')).toBe(1)
+  await market(2)
+  await act(async () => reject(new Error('A14 synthetic delayed failure')))
+  await tick(30_100)
+  expect(calls('alertsList')).toBe(1)
+})
+it('unsubscribing hidden CN cancels already scheduled retries without cancelling shared observers', async () => {
+  state.apiCall.mockImplementation(name => name === 'alertsList'
+    ? Promise.reject(new Error('A14 synthetic retry')) : Promise.resolve(answer(name)))
+  await renderTiming()
+  expect(calls('alertsList')).toBe(1)
+  // The first failure has already scheduled the default 1s retry.
+  await market(1); await tick(5000)
+  expect(calls('alertsList')).toBe(1)
+  // A separate consumer of precisely the same key must still be able to fetch.
+  const key = ['alerts', '', 'ext_gn_ths.所属概念,ext_hy_ths.所属同花顺行业']
+  const { QueryObserver } = await import('@tanstack/react-query')
+  const observer = new QueryObserver(timingClient!, {
+    queryKey: key, queryFn: async () => { state.apiCall('same-key-shared', []); return answer('alertsList') },
+    refetchInterval: 1000,
+  })
+  const unsubscribe = observer.subscribe(() => {})
+  try {
+    await tick(2100)
+    expect(calls('same-key-shared')).toBeGreaterThan(1)
+    expect(calls('alertsList')).toBe(1)
+  } finally { unsubscribe() }
 })

@@ -32,7 +32,8 @@ export function MonitorPreview({ market, state, controls }: { market: MonitorMar
   const alerts = (data?.alerts ?? []).filter(a => matches(a.symbol, a.title, a.severity))
   const detail = tasks.find(t => t.id === selected) ?? tasks[0]
   return <div data-monitor-preview={market} className="flex min-h-0 flex-col">
-    <PageHeader title={`${market} 监控中心 · Preview`} subtitle="只读合成任务与告警样本" titleExtra={<Badge />} />
+    <PageHeader className="pl-14 md:pl-5 [&>div>div]:flex-wrap md:[&>div>div]:flex-nowrap"
+      title={`${market} 监控中心 · Preview`} subtitle="只读合成任务与告警样本" titleExtra={<Badge />} />
     {controls}
     <div className="space-y-4 px-5 py-4">
       <aside aria-label="监控演示声明" className="rounded-xl border border-warning/30 bg-warning/5 p-4 text-xs leading-relaxed text-warning">
