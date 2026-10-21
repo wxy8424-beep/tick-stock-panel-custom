@@ -117,6 +117,65 @@ it('explicitly shows retained stale snapshot after background failure', async ()
 })
 
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)) }) }
+async function enterCode(value: string) {
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="美股证券代码"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+async function submitCode() {
+  await act(async () => host.querySelector<HTMLFormElement>('form[aria-label="美股代码查询"]')!.requestSubmit())
+  await settle()
+}
+it.each(['AAPL', ' aapl.us ', ' aapl ', 'BRK.B', 'BRK-B.US'])('opens normalized code %s without list navigation or new persistence', async value => {
+  await render('/?market=US&keep=yes')
+  const writes = vi.spyOn(Storage.prototype, 'setItem')
+  const before = mock.get.mock.calls.length
+  await enterCode(value)
+  expect(mock.get).toHaveBeenCalledTimes(before)
+  await submitCode()
+  const symbol = value.trim().toUpperCase().endsWith('.US') ? value.trim().toUpperCase() : value.trim().toUpperCase() + '.US'
+  expect(mock.get).toHaveBeenLastCalledWith(symbol)
+  expect(host.querySelector('[data-url]')?.textContent).toBe('/?market=US&keep=yes&quote_symbol=' + symbol)
+  expect([...host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter(b => ['上一只', '下一只'].includes(b.textContent!)).every(b => b.disabled)).toBe(true)
+  expect(writes).not.toHaveBeenCalled()
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="关闭快照"]')!.click()); await settle()
+  expect(host.querySelector('[data-url]')?.textContent).toBe('/?market=US&keep=yes')
+  expect(document.activeElement).toBe(host.querySelector('button[type="submit"]'))
+  writes.mockRestore()
+})
+it.each(['', '   ', '700.HK', '600000.SH', '000001.SZ', '430047.BJ', 'https://example.com/AAPL', 'AAPL,NVDA', 'AAPL NVDA', '苹果', '.SPX.US', 'AAPL/US'])('rejects %s locally without navigation or requests', async value => {
+  await render()
+  const before = mock.get.mock.calls.length
+  await enterCode(value); await submitCode()
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="美股证券代码"]')!
+  expect(input.getAttribute('aria-invalid')).toBe('true')
+  expect(document.getElementById(input.getAttribute('aria-describedby')!.split(' ').at(-1)!)?.textContent).toContain('请输入单个美股证券代码')
+  expect(mock.get).toHaveBeenCalledTimes(before)
+  expect(host.querySelector('[data-url]')?.textContent).toBe('/?market=US')
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+})
+it('keeps history stable on duplicate submit and restores the query with back/forward', async () => {
+  await render('/?market=US&keep=yes')
+  await enterCode('AAPL'); await submitCode()
+  const count = mock.get.mock.calls.length
+  await submitCode()
+  expect(mock.get).toHaveBeenCalledTimes(count)
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-back]')!.click()); await settle()
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-forward]')!.click()); await settle()
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('AAPL.US')
+})
+it('clears local validation on input and leaves absent quotes unavailable rather than falling back', async () => {
+  await render(); await enterCode('700.HK'); await submitCode()
+  await enterCode('ZZZZ')
+  expect(host.querySelector('input[aria-invalid="true"]')).toBeNull()
+  mock.get.mockImplementation(symbol => Promise.resolve({ ...response(symbol), focus_quote: null }))
+  await submitCode()
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('未返回该证券报价')
+  expect(mock.get).toHaveBeenLastCalledWith('ZZZZ.US')
+})
 it('restores a direct quote URL and closes it in place; no fallback request', async () => {
   await render('/?market=US&quote_symbol=AAPL.US&keep=yes')
   expect(mock.get).toHaveBeenCalledTimes(1); expect(mock.get).toHaveBeenLastCalledWith('AAPL.US')

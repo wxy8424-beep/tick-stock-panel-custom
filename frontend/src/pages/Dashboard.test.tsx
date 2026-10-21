@@ -55,3 +55,22 @@ it('opens a direct US URL with only the US business request and no extra detail 
   expect(used).toEqual(['usDashboard'])
   expect(write.mock.calls.map(c => c[0])).toEqual(['tsp.dashboard.us.layout.v1']) // Existing dashboard layout persistence, not a new detail write.
 })
+it('submits a US code through the actual Dashboard route without CN APIs, new persistence or notifications', async () => {
+  await render('/?market=US&keep=yes')
+  const write = vi.spyOn(Storage.prototype, 'setItem')
+  const alert = vi.spyOn(window, 'alert').mockImplementation(() => {})
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="美股证券代码"]')!
+  const count = vi.mocked(api.usDashboard).mock.calls.length
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, ' msft ')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(api.usDashboard).toHaveBeenCalledTimes(count)
+  await act(async () => host.querySelector<HTMLFormElement>('form[aria-label="美股代码查询"]')!.requestSubmit()); await settle()
+  expect(host.querySelector('[data-url]')?.textContent).toBe('?market=US&keep=yes&quote_symbol=MSFT.US')
+  expect(api.usDashboard).toHaveBeenLastCalledWith('MSFT.US')
+  expect(calls.cn).not.toHaveBeenCalled()
+  expect(Object.entries(api).filter(([, fn]) => vi.isMockFunction(fn) && fn.mock.calls.length).map(([name]) => name)).toEqual(['usDashboard'])
+  expect(write).not.toHaveBeenCalled()
+  expect(alert).not.toHaveBeenCalled()
+})

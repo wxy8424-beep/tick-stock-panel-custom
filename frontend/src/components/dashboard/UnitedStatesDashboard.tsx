@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { USQuoteSnapshotDialog } from './USQuoteSnapshotDialog'
@@ -53,6 +53,9 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
   const validSymbol = (value: unknown): value is string => typeof value === 'string' && /^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*-?\.US$/.test(value)
   const invalid = preview && (symbols.length !== 1 || !validSymbol(symbols[0]))
   const focus = preview && !invalid ? symbols[0] : undefined
+  const codeId = useId()
+  const [code, setCode] = useState('')
+  const [codeError, setCodeError] = useState('')
   const entry = location.state?.usQuote as { symbols?: unknown; returnTo?: unknown } | undefined
   const navigation = Array.isArray(entry?.symbols) ? [...new Set(entry.symbols.filter(validSymbol))].slice(0, 40) : []
   const href = (symbol: string) => { const next = new URLSearchParams(params); next.set('market', 'US'); next.set('quote_symbol', symbol); return location.pathname + '?' + next }
@@ -82,6 +85,22 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
     navigate(href(row.symbol), { state: { usQuote: { symbols: source.map(item => item.symbol).filter(validSymbol), returnTo: location.pathname + '?' + returnParams } } })
   }
   const changeStock = (symbol: string) => { if (validSymbol(symbol) && navigation.includes(symbol)) navigate(href(symbol), { replace: true, state: location.state }) }
+  const submitCode = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const value = code.trim().toUpperCase()
+    const symbol = value.endsWith('.US') ? value : `${value}.US`
+    if (/\.(HK|SH|SZ|BJ)$/.test(value) || !validSymbol(symbol)) {
+      setCodeError('请输入单个美股证券代码，例如 AAPL 或 AAPL.US；不支持其他市场、公司名称或多个代码。')
+      return
+    }
+    setCodeError('')
+    if (symbol === focus) return
+    // Give Modal a stable native submit control to restore focus to, including
+    // Enter submissions from the input. No list navigation is invented here.
+    event.currentTarget.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus()
+    const returnParams = new URLSearchParams(params); returnParams.delete('quote_symbol')
+    navigate(href(symbol), { state: { usQuote: { symbols: [], returnTo: location.pathname + '?' + returnParams } } })
+  }
   const add = (type: WidgetType, props?: Record<string, string>) => {
     if (type !== 'ext-link' && items.some(item => item.t === type)) return
     const def = widgetDef(type)!
@@ -130,6 +149,17 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
       <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-secondary"><span>纽约 {dateTime(data?.market.local_time)}</span><span>Longbridge</span><button type="button" onClick={() => { if (!invalid) void query.refetch() }} disabled={invalid || query.isFetching} className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px] disabled:opacity-50"><RefreshCw className="h-3 w-3" />重载</button>{!editing ? <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px]"><GripVertical className="h-3 w-3" />自定义布局</button> : <><AddWidgetPanel placedTypes={new Set(items.map(item => item.t))} onAdd={add} widgetLabels={US_WIDGET_LABELS} /><button type="button" onClick={() => setItems(cloneItems(DEFAULT_LAYOUT))} className="inline-flex items-center gap-1 rounded-btn border border-border px-2 py-1"><RotateCcw className="h-3 w-3" />恢复默认</button><button type="button" onClick={() => setEditing(false)} className="inline-flex items-center gap-1 rounded-btn bg-accent px-2 py-1 text-white"><Check className="h-3 w-3" />完成</button></>}</div>
     </header>
     <MarketSwitcherBar value="US" enabledMarkets={['CN', 'HK', 'US']} onChange={onMarketChange} className="mb-1.5 rounded-card border px-3" />
+    <form aria-label="美股代码查询" onSubmit={submitCode} className="mb-1.5 min-w-0 rounded-card border border-border bg-surface px-3 py-2">
+      <label htmlFor={codeId} className="mb-1 block text-xs font-medium">美股证券代码</label>
+      <div className="flex min-w-0 flex-wrap gap-2">
+        <input id={codeId} aria-label="美股证券代码" value={code} onChange={event => { setCode(event.target.value); setCodeError('') }}
+          aria-invalid={!!codeError} aria-describedby={`${codeId}-hint${codeError ? ` ${codeId}-error` : ''}`} autoComplete="off" spellCheck={false}
+          placeholder="AAPL 或 AAPL.US" className="min-w-0 flex-1 basis-40 rounded-btn border border-border bg-base px-2 py-1.5 text-sm" />
+        <button type="submit" className="shrink-0 rounded-btn border border-border px-3 py-1.5 text-xs">查看报价</button>
+      </div>
+      <p id={`${codeId}-hint`} className="mt-1 break-words text-[10px] text-muted">按代码查询，不支持公司名称搜索；格式有效不代表证券已上市或有可用报价。</p>
+      {codeError && <p id={`${codeId}-error`} role="alert" className="mt-1 break-words text-xs text-warning">{codeError}</p>}
+    </form>
     <p className="mb-1.5 break-words text-[10px] text-muted">{data?.sample.coverage || '当前可获取美股样本，非全市场'} · 成功 {data?.sample.received ?? '—'}/{data?.sample.requested ?? '—'}{universe && <> · {coverageStatus} · 缺失 {data?.sample.failed ?? 0} · 失败批次 {data?.sample.failed_batches ?? 0} · 拒绝代码 {data?.sample.rejected_symbols ?? 0} · 统计日期 {data?.sample.statistics_date || '—'}（纽约） · 纳入统计 {data?.sample.statistics_received ?? '—'} · 排除旧日报价 {data?.sample.stale_quote_count ?? 0} · 完成 {dateTime(data?.sample.completed_at)} · 逐批快照，非同一瞬间；常规时段每轮后30秒刷新，其余时段5分钟。{data?.sample.error && ` 原因：${hkError(data.sample.error)}`}</>} · 报价可能停留在标的最近交易时刻；历史日期暂不可用；{calendarLabel(data?.market)}。未启用盘前/盘后行情。</p>
     <DashboardGrid items={items} onItemsChange={next => setItems(normalizeUSLayout(toBlob(next)))} editing={editing} renderItem={render} widgetLabels={labels} rowHeight={48} gap={10} />
     {preview && <USQuoteSnapshotDialog symbol={symbols[0]} invalid={invalid} quote={focused} responseTime={data?.updated_at}
