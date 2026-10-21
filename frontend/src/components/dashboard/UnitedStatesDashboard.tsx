@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Check, Gauge, GripVertical, RefreshCw, RotateCcw, X } from 'lucide-react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
+import { USQuoteSnapshotDialog } from './USQuoteSnapshotDialog'
+import { Check, Gauge, GripVertical, RefreshCw, RotateCcw } from 'lucide-react'
 import { api, type MarketSnapshotRow, type USSection, type USSectionKey, type USStats } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { fmtBigNum } from '@/lib/format'
@@ -45,9 +47,21 @@ function Frame({ type, label, section, loading, error, children }: { type: Widge
 }
 
 export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (market: Market) => void }) {
-  const [focus, setFocus] = useState<string>()
-  const [preview, setPreview] = useState(false)
-  const [navigation, setNavigation] = useState<Row[]>([])
+  const location = useLocation(), navigate = useNavigate(), [params] = useSearchParams()
+  const symbols = params.getAll('quote_symbol')
+  const preview = symbols.length > 0
+  const validSymbol = (value: unknown): value is string => typeof value === 'string' && /^[A-Z][A-Z0-9]*(?:[.-][A-Z0-9]+)*-?\.US$/.test(value)
+  const invalid = preview && (symbols.length !== 1 || !validSymbol(symbols[0]))
+  const focus = preview && !invalid ? symbols[0] : undefined
+  const entry = location.state?.usQuote as { symbols?: unknown; returnTo?: unknown } | undefined
+  const navigation = Array.isArray(entry?.symbols) ? [...new Set(entry.symbols.filter(validSymbol))].slice(0, 40) : []
+  const href = (symbol: string) => { const next = new URLSearchParams(params); next.set('market', 'US'); next.set('quote_symbol', symbol); return location.pathname + '?' + next }
+  const close = () => {
+    const expected = new URLSearchParams(params); expected.delete('quote_symbol')
+    // Direct links close in place; only our own dashboard entry may go back.
+    if (entry?.returnTo === location.pathname + '?' + expected) navigate(-1)
+    else navigate({ pathname: location.pathname, search: expected.toString() }, { replace: true, state: null })
+  }
   const [editing, setEditing] = useState(false)
   const [items, setStoredItems] = useState<DashboardItem[]>(() => {
     try { return normalizeUSLayout(JSON.parse(localStorage.getItem(US_LAYOUT_KEY) || 'null')) } catch { return normalizeUSLayout(null) }
@@ -56,14 +70,18 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
   useEffect(() => {
     try { localStorage.setItem(US_LAYOUT_KEY, JSON.stringify(toBlob(items))) } catch { /* Session layout still works when storage is unavailable. */ }
   }, [items])
-  const query = useQuery({ queryKey: QK.usDashboard(focus), queryFn: () => api.usDashboard(focus), staleTime: 30000, refetchInterval: 30000, retry: false })
-  const data = query.data
+  const query = useQuery({ queryKey: QK.usDashboard(focus), queryFn: () => api.usDashboard(focus), enabled: !invalid, placeholderData: previous => previous, staleTime: 30000, refetchInterval: 30000, retry: false })
+  const data = invalid ? undefined : query.data
   const universe = data?.sample.scope === 'provider_universe'
   const prefix = universe ? '覆盖证券' : '样本'
   const labels = universe ? { ...US_WIDGET_LABELS, kpi: '覆盖证券指标', distribution: '覆盖证券涨跌分布 / 广度', gainers: '覆盖证券涨幅榜', losers: '覆盖证券跌幅榜', turnover: '覆盖证券成交额榜' } : US_WIDGET_LABELS
   const coverageStatus = { loading: '首次采集中', refreshing: '后台刷新中', ready: '本轮全部获取', partial: '部分获取', stale: '保留上轮快照（刷新失败）', unavailable: '采集不可用' }[data?.sample.status ?? 'loading']
   const rows = (key: USSectionKey): Row[] => Array.isArray(data?.[key].data) ? data[key].data as Row[] : []
-  const open = (row: Row, source: Row[]) => { setFocus(row.symbol); setNavigation(source); setPreview(true) }
+  const open = (row: Row, source: Row[]) => {
+    const returnParams = new URLSearchParams(params); returnParams.delete('quote_symbol')
+    navigate(href(row.symbol), { state: { usQuote: { symbols: source.map(item => item.symbol).filter(validSymbol), returnTo: location.pathname + '?' + returnParams } } })
+  }
+  const changeStock = (symbol: string) => { if (validSymbol(symbol) && navigation.includes(symbol)) navigate(href(symbol), { replace: true, state: location.state }) }
   const add = (type: WidgetType, props?: Record<string, string>) => {
     if (type !== 'ext-link' && items.some(item => item.t === type)) return
     const def = widgetDef(type)!
@@ -90,7 +108,7 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
       const value = data?.ladder.data as { symbol: string; call_volume: number | null; put_volume: number | null; put_call_ratio: number | null } | null
       return value && <><p className="mb-2 text-[10px] text-muted">焦点 {value.symbol} · 未提供OI，未计算情绪评分</p><div className="grid grid-cols-2 gap-1.5"><MiniMetric label="看涨期权成交量" value={fmtPrice(value.call_volume, 0)} /><MiniMetric label="看跌期权成交量" value={fmtPrice(value.put_volume, 0)} /><MiniMetric label="看跌/看涨成交比" value={fmtPrice(value.put_call_ratio)} /></div><p className="mt-2 text-[9px] text-muted">比率为派生；看涨成交量为0时显示 —</p></>
     }
-    if (type === 'gainers' || type === 'losers' || type === 'turnover') return <StockList title={labels[type]} rows={rows(type)} mode={type === 'gainers' ? 'gain' : type === 'losers' ? 'loss' : 'amount'} activeSymbol={preview ? focus : undefined} onStockClick={symbol => { const source = rows(type).slice(0, 8); const row = source.find(item => item.symbol === symbol); if (row) open(row, source) }} />
+    if (type === 'gainers' || type === 'losers' || type === 'turnover') return <StockList title={labels[type]} rows={rows(type)} mode={type === 'gainers' ? 'gain' : type === 'losers' ? 'loss' : 'amount'} activeSymbol={preview ? focus : undefined} stockHref={href} onStockClick={symbol => { const source = rows(type).slice(0, 8); const row = source.find(item => item.symbol === symbol); if (row) open(row, source) }} />
     if (type === 'monitor' || type === 'activity') return <div className="space-y-1.5">{rows(type).map((row, index) => <button key={`${row.symbol}-${index}`} type="button" className="block w-full rounded-md border border-border/40 bg-elevated/40 p-1.5 text-left text-[10px] hover:border-accent/40" onClick={() => open(row, rows(type))}>
       <div className="flex items-center justify-between gap-1"><span className="truncate">{stockName(row)} · {row.symbol}</span><span className="shrink-0 font-mono">{fmtStockPct(row.change_pct)}</span></div><p className="mt-1 text-secondary">{hkReason(row.reason)}</p><p className="mt-1 text-muted">{dateTime(row.timestamp)} · {row.labels?.map(label => hkIndustry(label)).join(' / ')}</p>
     </button>)}</div>
@@ -104,17 +122,18 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
     return <Frame type={item.t} label={labels[item.t]} section={section} loading={query.isLoading} error={query.isError}>{content(item.t)}</Frame>
   }
   const sessionLabel = marketSessionLabel(data?.market)
-  const focused = data && focus && data.focus_symbol === focus ? data.focus_quote as Row | null : null
+  const focused = !query.isPlaceholderData && data?.market.code === 'US' && focus && data.focus_symbol === focus && data.focus_quote?.symbol === focus ? data.focus_quote : null
+  const position = focus ? navigation.indexOf(focus) : -1
   return <div className="min-h-full min-w-0 bg-base p-1.5">
     <header className="relative mb-1.5 flex flex-wrap items-center justify-between gap-2 overflow-hidden rounded-card border border-border bg-gradient-to-r from-surface/90 to-surface/70 px-3 py-1.5 shadow-[0_1px_3px_hsl(var(--border)/0.4)] backdrop-blur-sm">
       <div className="pointer-events-none absolute left-0 top-0 h-full w-1 bg-gradient-to-b from-accent to-accent/20" /><div className="flex items-center gap-2"><Gauge className="h-4 w-4 text-accent" /><h1 className="text-[16px] font-semibold leading-6">美股市场看板</h1><span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-accent">{sessionLabel}</span></div>
-      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-secondary"><span>纽约 {dateTime(data?.market.local_time)}</span><span>Longbridge</span><button type="button" onClick={() => query.refetch()} disabled={query.isFetching} className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px] disabled:opacity-50"><RefreshCw className="h-3 w-3" />重载</button>{!editing ? <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px]"><GripVertical className="h-3 w-3" />自定义布局</button> : <><AddWidgetPanel placedTypes={new Set(items.map(item => item.t))} onAdd={add} widgetLabels={US_WIDGET_LABELS} /><button type="button" onClick={() => setItems(cloneItems(DEFAULT_LAYOUT))} className="inline-flex items-center gap-1 rounded-btn border border-border px-2 py-1"><RotateCcw className="h-3 w-3" />恢复默认</button><button type="button" onClick={() => setEditing(false)} className="inline-flex items-center gap-1 rounded-btn bg-accent px-2 py-1 text-white"><Check className="h-3 w-3" />完成</button></>}</div>
+      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-secondary"><span>纽约 {dateTime(data?.market.local_time)}</span><span>Longbridge</span><button type="button" onClick={() => { if (!invalid) void query.refetch() }} disabled={invalid || query.isFetching} className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px] disabled:opacity-50"><RefreshCw className="h-3 w-3" />重载</button>{!editing ? <button type="button" onClick={() => setEditing(true)} className="inline-flex items-center gap-1 rounded-btn border border-border bg-elevated px-2 py-1 text-[11px]"><GripVertical className="h-3 w-3" />自定义布局</button> : <><AddWidgetPanel placedTypes={new Set(items.map(item => item.t))} onAdd={add} widgetLabels={US_WIDGET_LABELS} /><button type="button" onClick={() => setItems(cloneItems(DEFAULT_LAYOUT))} className="inline-flex items-center gap-1 rounded-btn border border-border px-2 py-1"><RotateCcw className="h-3 w-3" />恢复默认</button><button type="button" onClick={() => setEditing(false)} className="inline-flex items-center gap-1 rounded-btn bg-accent px-2 py-1 text-white"><Check className="h-3 w-3" />完成</button></>}</div>
     </header>
     <MarketSwitcherBar value="US" enabledMarkets={['CN', 'HK', 'US']} onChange={onMarketChange} className="mb-1.5 rounded-card border px-3" />
     <p className="mb-1.5 break-words text-[10px] text-muted">{data?.sample.coverage || '当前可获取美股样本，非全市场'} · 成功 {data?.sample.received ?? '—'}/{data?.sample.requested ?? '—'}{universe && <> · {coverageStatus} · 缺失 {data?.sample.failed ?? 0} · 失败批次 {data?.sample.failed_batches ?? 0} · 拒绝代码 {data?.sample.rejected_symbols ?? 0} · 统计日期 {data?.sample.statistics_date || '—'}（纽约） · 纳入统计 {data?.sample.statistics_received ?? '—'} · 排除旧日报价 {data?.sample.stale_quote_count ?? 0} · 完成 {dateTime(data?.sample.completed_at)} · 逐批快照，非同一瞬间；常规时段每轮后30秒刷新，其余时段5分钟。{data?.sample.error && ` 原因：${hkError(data.sample.error)}`}</>} · 报价可能停留在标的最近交易时刻；历史日期暂不可用；{calendarLabel(data?.market)}。未启用盘前/盘后行情。</p>
     <DashboardGrid items={items} onItemsChange={next => setItems(normalizeUSLayout(toBlob(next)))} editing={editing} renderItem={render} widgetLabels={labels} rowHeight={48} gap={10} />
-    {preview && <div role="dialog" aria-modal="true" aria-label="美股股票快照" className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-3" onClick={() => setPreview(false)} onKeyDown={event => { if (event.key === 'Escape') setPreview(false) }}>
-      <div className="w-full max-w-lg rounded-card border border-border bg-surface p-4" onClick={event => event.stopPropagation()}><div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold">{focused ? stockName(focused) : focus} · {focus}</h2><button type="button" aria-label="关闭快照" onClick={() => setPreview(false)}><X className="h-4 w-4" /></button></div>{focused ? <div className="grid grid-cols-3 gap-2"><MiniMetric label="最新价" value={fmtPrice(focused.close)} /><MiniMetric label="涨跌幅" value={fmtStockPct(focused.change_pct)} /><MiniMetric label="今开" value={fmtPrice(focused.open)} /><MiniMetric label="最高" value={fmtPrice(focused.high)} /><MiniMetric label="最低" value={fmtPrice(focused.low)} /><MiniMetric label="币种" value={focused.currency || '—'} /></div> : <p className="text-xs text-muted">{query.isFetching ? '加载中…' : '暂无该股票可靠快照'}</p>}<p className="mt-3 text-[10px] text-muted">更新 {dateTime(focused?.timestamp)} · 只读报价，未启用美股个股分析或交易</p><div className="mt-3 flex gap-2">{['上一只', '下一只'].map((label, offset) => { const index = navigation.findIndex(row => row.symbol === focus) + (offset ? 1 : -1); return <button key={label} type="button" disabled={!navigation[index]} onClick={() => setFocus(navigation[index].symbol)} className="rounded-btn border border-border px-2 py-1 text-xs disabled:opacity-40">{label}</button> })}</div></div>
-    </div>}
+    {preview && <USQuoteSnapshotDialog symbol={symbols[0]} invalid={invalid} quote={focused} responseTime={data?.updated_at}
+      loading={query.isLoading || query.isPlaceholderData} fetching={query.isFetching} failed={query.isError} onRetry={() => { if (!invalid) void query.refetch() }} onClose={close}
+      previous={position > 0 ? navigation[position - 1] : undefined} next={position >= 0 ? navigation[position + 1] : undefined} onNavigate={changeStock} />}
   </div>
 }

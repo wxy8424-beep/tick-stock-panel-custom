@@ -35,8 +35,14 @@ export function Dashboard() {
     setParams(previous => {
       const updated = new URLSearchParams(previous)
       updated.set('market', next)
+      if (next !== 'US') updated.delete('quote_symbol')
       return updated
     })
+  }
+  // A quote deep link is US-only. Malformed market context must not mount CN
+  // business hooks merely because the normal dashboard defaults to CN.
+  if (params.has('quote_symbol') && (params.getAll('market').length !== 1 || requested !== 'US')) {
+    return <main className="min-w-0 p-4 pl-14 md:pl-5"><h1 className="text-lg font-semibold">报价链接参数错误</h1><p role="alert" className="my-3 text-sm">美股快照链接必须指定唯一 market=US；未加载其他市场业务。</p><button type="button" className="rounded-btn border border-border px-3 py-2 text-sm" onClick={() => setParams(previous => { const next = new URLSearchParams(previous); next.delete('quote_symbol'); next.set('market', market); return next })}>返回市场看板</button></main>
   }
   return market === 'US' ? <UnitedStatesDashboard onMarketChange={changeMarket} /> : market === 'HK' ? <HongKongDashboard onMarketChange={changeMarket} /> : <ChinaDashboard onMarketChange={changeMarket} />
 }

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { UnitedStatesDashboard, US_LAYOUT_KEY, normalizeUSLayout } from './UnitedStatesDashboard'
@@ -34,8 +35,12 @@ beforeEach(() => {
   mock.grid.mockClear()
 })
 afterEach(async () => { await act(async () => root.unmount()); client.clear(); host.remove() })
-async function render() {
-  await act(async () => { root.render(<QueryClientProvider client={client}><UnitedStatesDashboard onMarketChange={vi.fn()} /></QueryClientProvider>); await new Promise(resolve => setTimeout(resolve, 20)) })
+function Navigation() {
+  const location = useLocation(), navigate = useNavigate()
+  return <><output data-url>{location.pathname}{location.search}</output><button data-back onClick={() => navigate(-1)}>history back</button><button data-forward onClick={() => navigate(1)}>history forward</button><button data-switch onClick={() => navigate('/?market=US&quote_symbol=NVDA.US')}>direct NVDA</button></>
+}
+async function render(path = '/?market=US') {
+  await act(async () => { root.render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}><Navigation /><UnitedStatesDashboard onMarketChange={vi.fn()} /></MemoryRouter></QueryClientProvider>); await new Promise(resolve => setTimeout(resolve, 20)) })
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
 }
 it('keeps CN 13 slot types with spacious US metrics, Chinese labels and independent query/storage', async () => {
@@ -72,7 +77,7 @@ it('expands saved short KPI cards without overlaps or repeatedly shifting the sa
 })
 it('opens real US row and navigates only its actual list without CN preview queries', async () => {
   await render()
-  const button = [...host.querySelectorAll<HTMLDivElement>('[data-us-slot="gainers"] div.cursor-pointer')].find(node => node.textContent?.includes('NVDA.US'))!
+  const button = [...host.querySelectorAll<HTMLAnchorElement>('[data-us-slot="gainers"] a')].find(node => node.textContent?.includes('NVDA.US'))!
   await act(async () => { button.click(); await new Promise(resolve => setTimeout(resolve, 20)) })
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
   expect(mock.get).toHaveBeenLastCalledWith('NVDA.US')
@@ -109,4 +114,95 @@ it('explicitly shows retained stale snapshot after background failure', async ()
   mock.get.mockResolvedValue(data)
   await render()
   expect(host.textContent).toContain('保留上轮快照（刷新失败）')
+})
+
+async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)) }) }
+it('restores a direct quote URL and closes it in place; no fallback request', async () => {
+  await render('/?market=US&quote_symbol=AAPL.US&keep=yes')
+  expect(mock.get).toHaveBeenCalledTimes(1); expect(mock.get).toHaveBeenLastCalledWith('AAPL.US')
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('官方名称')
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="关闭快照"]')!.click()); await settle()
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  expect(host.querySelector('[data-url]')?.textContent).toBe('/?market=US&keep=yes')
+})
+it.each(['', 'AAPL', '700.HK', '.SPX.US', 'AAPL.US&quote_symbol=NVDA.US'])('fails closed for invalid quote URL %s', async symbol => {
+  await render('/?market=US&quote_symbol=' + symbol)
+  expect(host.textContent).toContain('参数错误'); expect(mock.get).not.toHaveBeenCalled()
+})
+it('preserves native link behavior and browser back/forward without changing saved US layout', async () => {
+  await render()
+  const saved = localStorage.getItem(US_LAYOUT_KEY)
+  const link = host.querySelector<HTMLAnchorElement>('[data-us-slot="gainers"] a')!
+  expect(link.href).toContain('quote_symbol=AAPL.US')
+  await act(async () => link.click()); await settle()
+  expect(host.querySelector('[data-url]')?.textContent).toContain('quote_symbol=AAPL.US')
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-back]')!.click()); await settle()
+  expect(host.querySelector('[role="dialog"]')).toBeNull()
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-forward]')!.click()); await settle()
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('AAPL.US')
+  expect(localStorage.getItem(US_LAYOUT_KEY)).toBe(saved)
+})
+it('late AAPL completion cannot overwrite NVDA after a rapid URL switch', async () => {
+  let resolve!: (value: USDashboardResponse) => void
+  mock.get.mockImplementation(symbol => symbol === 'AAPL.US' ? new Promise(yes => { resolve = yes }) : Promise.resolve(response(symbol)))
+  await render('/?market=US&quote_symbol=AAPL.US')
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('正在获取')
+  await act(async () => host.querySelector<HTMLButtonElement>('[data-switch]')!.click()); await settle()
+  await act(async () => resolve({ ...response('AAPL.US'), focus_quote: { symbol: 'AAPL.US', close: 777 } })); await settle()
+  const dialog = host.querySelector('[role="dialog"]')!
+  expect(dialog.textContent).toContain('NVDA.US'); expect(dialog.textContent).not.toContain('777')
+  expect(client.getQueryData(['us-dashboard', 'AAPL.US'])).toBeDefined()
+})
+it('retries a failed quote without loading CN APIs and does not infer focus staleness from coverage', async () => {
+  mock.get.mockRejectedValueOnce(new Error('synthetic failure')).mockImplementation(symbol => Promise.resolve({ ...response(symbol), sample: { ...response(symbol).sample, stale: true, status: 'stale' } }))
+  await render('/?market=US&quote_symbol=AAPL.US')
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('请求失败')
+  await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '重试报价')!.click()); await settle()
+  const text = host.querySelector('[role="dialog"]')!.textContent
+  expect(text).toContain('102.00'); expect(text).toContain('新鲜度无法判定'); expect(text).not.toContain('报价已过期')
+  expect(client.getQueryCache().getAll().every(q => q.queryKey[0] === 'us-dashboard')).toBe(true)
+})
+it('does not show a differently identified quote even if the response says focus AAPL', async () => {
+  mock.get.mockResolvedValue({ ...response(), focus_quote: { symbol: '700.HK', market: 'HK', close: 999 } })
+  await render('/?market=US&quote_symbol=AAPL.US')
+  expect(host.querySelector('[role="dialog"]')?.textContent).not.toContain('999')
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('未返回该证券报价')
+})
+it('keeps the source list mounted while a new quote loads without displaying placeholder quote data', async () => {
+  await render()
+  const link = host.querySelector<HTMLAnchorElement>('[data-us-slot="gainers"] a')!
+  let resolve!: (value: USDashboardResponse) => void
+  mock.get.mockImplementation(() => new Promise(yes => { resolve = yes }))
+  await act(async () => link.click()); await settle()
+  expect(host.querySelector('[data-us-slot="gainers"] a')).toBe(link)
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('正在获取')
+  expect(host.querySelector('[role="dialog"]')?.textContent).not.toContain('102.00')
+  await act(async () => resolve(response('AAPL.US'))); await settle()
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('102.00')
+})
+it('keeps matching cached data on background failure, then recovers through the actual query retry control', async () => {
+  await render('/?market=US&quote_symbol=AAPL.US')
+  mock.get.mockRejectedValue(new Error('synthetic refetch failure'))
+  await act(async () => { await client.refetchQueries({ queryKey: ['us-dashboard', 'AAPL.US'], exact: true }) }); await settle()
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('保留同证券缓存报价')
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('102.00')
+  mock.get.mockResolvedValue(response('AAPL.US'))
+  await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '重试报价')!.click()); await settle()
+  expect(host.querySelector('[role="dialog"]')?.textContent).not.toContain('保留同证券缓存报价')
+})
+it('invalid links cannot bypass the guard through the dashboard reload button', async () => {
+  await render('/?market=US&quote_symbol=700.HK')
+  const reload = [...host.querySelectorAll('button')].find(b => b.textContent === '重载')!
+  expect(reload.disabled).toBe(true)
+  await act(async () => reload.click()); expect(mock.get).not.toHaveBeenCalled()
+})
+it.each(['gainers', 'losers', 'turnover', 'monitor', 'activity'] as const)('opens the existing %s entry with its own navigation context', async slot => {
+  const data = response()
+  data[slot] = { ...data.gainers }
+  mock.get.mockResolvedValue(data)
+  await render()
+  const entry = host.querySelector<HTMLElement>(`[data-us-slot="${slot}"] ${slot === 'monitor' || slot === 'activity' ? 'button' : 'a'}`)!
+  await act(async () => entry.click()); await settle()
+  expect(host.querySelector('[data-url]')?.textContent).toContain('quote_symbol=AAPL.US')
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('AAPL.US')
 })

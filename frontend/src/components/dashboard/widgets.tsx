@@ -202,11 +202,13 @@ export function LadderMini({ limit }: { limit: OverviewMarket['limit'] }) {
 }
 
 // ===== 四大榜单 =====
-export function StockList({ title, rows, mode, onStockClick, activeSymbol }: {
+export function StockList({ title, rows, mode, onStockClick, activeSymbol, stockHref }: {
   title: string; rows: MarketSnapshotRow[]; mode: 'gain' | 'loss' | 'amount' | 'active';
   onStockClick?: (symbol: string, name?: string) => void;
   activeSymbol?: string;
+  stockHref?: (symbol: string) => string;
 }) {
+  const RowElement = stockHref ? 'a' : 'div'
   return (
     <div className="rounded-card border border-border bg-surface/80 p-1.5 shadow-[0_1px_2px_hsl(var(--border)/0.4)] backdrop-blur-sm transition-shadow hover:shadow-[0_2px_8px_hsl(var(--border)/0.5)]">
       <div className="mb-1 flex items-center justify-between">
@@ -215,10 +217,17 @@ export function StockList({ title, rows, mode, onStockClick, activeSymbol }: {
       </div>
       <div className="space-y-1">
         {rows.slice(0, 8).map((r, idx) => (
-          <div
+          <RowElement
             key={`${r.symbol}-${idx}`}
+            href={stockHref?.(r.symbol)}
             className={`grid grid-cols-[18px_1fr_auto] items-center gap-1.5 rounded-md px-1.5 py-1 cursor-pointer transition-colors border ${r.symbol === activeSymbol ? 'bg-accent/10 border-accent/30' : 'bg-elevated/40 border-transparent hover:bg-elevated hover:brightness-110 hover:border-border/60'}`}
-            onClick={() => onStockClick?.(r.symbol, r.name ?? undefined)}
+            onClick={event => {
+              if (stockHref) {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+                event.preventDefault()
+              }
+              onStockClick?.(r.symbol, r.name ?? undefined)
+            }}
           >
             <span className="text-center font-mono text-[10px] text-muted">{idx + 1}</span>
             <div className="min-w-0">
@@ -253,7 +262,7 @@ export function StockList({ title, rows, mode, onStockClick, activeSymbol }: {
                 </>
               )}
             </div>
-          </div>
+          </RowElement>
         ))}
         {rows.length === 0 && <div className="py-5 text-center text-xs text-muted">暂无数据</div>}
       </div>
