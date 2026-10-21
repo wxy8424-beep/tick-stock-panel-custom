@@ -1,3 +1,4 @@
+import { watchlistQueryFn } from '@/lib/watchlist-query-options'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
@@ -660,7 +661,7 @@ function DeviationView({ active, onPreview }: {
   // 自选过滤在关闭 (查看上次结果) 时也可用: 自选列表是轻量接口, 不涉及全市场计算
   const watchlist = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
     enabled: active && watchlistOnly,
     subscribed: active,
     staleTime: 30_000,

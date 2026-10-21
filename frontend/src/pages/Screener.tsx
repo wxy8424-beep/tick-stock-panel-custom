@@ -1,3 +1,4 @@
+import { watchlistQueryFn } from '@/lib/watchlist-query-options'
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
@@ -689,7 +690,7 @@ function ChinaScreener({ marketControls }: { marketControls: ReactNode }) {
   // 自选列表 (用于判断是否在自选中)
   const watchlist = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
     staleTime: 30_000,
   })
   const watchlistSet = useMemo(() => {

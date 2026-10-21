@@ -1,3 +1,4 @@
+import { watchlistQueryFn, watchlistGroupsQueryFn } from '@/lib/watchlist-query-options'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -131,12 +132,12 @@ export function RuleEditor({ rule, preset, simple, onClose, onSaved }: Props) {
   const watchMenuRef = useRef<HTMLDivElement>(null)
   const watchlistQ = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
     enabled: watchMenuOpen || isGroupScope,
   })
   const watchGroupsQ = useQuery({
     queryKey: QK.watchlistGroups,
-    queryFn: api.watchlistGroups,
+    queryFn: watchlistGroupsQueryFn,
     enabled: watchMenuOpen || isGroupScope,
   })
   // 分组选择下拉 (scope=watchlist_group)

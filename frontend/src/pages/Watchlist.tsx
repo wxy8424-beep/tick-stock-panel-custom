@@ -1,3 +1,4 @@
+import { watchlistQueryFn, watchlistGroupsQueryFn } from '@/lib/watchlist-query-options'
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -231,6 +232,7 @@ function renderExtCell(
 // ===== 搜索框组件（紧凑内联式）=====
 
 function StockSearchBox({
+  pageActive,
   onPreview,
   existingBySymbol,
   groups,
@@ -240,6 +242,7 @@ function StockSearchBox({
   addPending,
   memberPending,
 }: {
+  pageActive: boolean
   onPreview: (symbol: string, name: string) => void
   /** symbol -> 该标的当前所属分组 id 列表; 不在 Map 中 = 未加自选 */
   existingBySymbol: Map<string, string[]>
@@ -259,7 +262,8 @@ function StockSearchBox({
   const search = useQuery({
     queryKey: QK.instrumentSearch(query, 'stock,etf,index'),
     queryFn: () => api.instrumentSearch(query, 20, 'stock,etf,index'),
-    enabled: query.trim().length > 0,
+    enabled: pageActive && query.trim().length > 0,
+    subscribed: pageActive,
     staleTime: 30_000,
   })
 
@@ -315,7 +319,7 @@ function StockSearchBox({
         />
       </div>
 
-      <AnimatePresence>
+      {pageActive && <AnimatePresence>
         {open && results.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -4 }}
@@ -410,7 +414,7 @@ function StockSearchBox({
             })}
           </motion.div>
         )}
-      </AnimatePresence>
+      </AnimatePresence>}
     </div>
   )
 }
@@ -462,6 +466,7 @@ function useCardColumnCount(): number {
 }
 
 const StockCard = React.memo(function StockCard({
+  pageActive,
   r,
   candleRows,
   showCandle,
@@ -480,6 +485,7 @@ const StockCard = React.memo(function StockCard({
   onToggleMember,
   groupChangePending,
 }: {
+  pageActive: boolean
   r: any
   candleRows: KlineRow[]
   showCandle: boolean
@@ -542,13 +548,13 @@ const StockCard = React.memo(function StockCard({
           </div>
         ) : (
           <div className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
-            <WatchlistGroupPicker
+            {pageActive && <WatchlistGroupPicker
               groups={groups}
               groupIds={r.group_ids ?? []}
               symbol={r.symbol}
               disabled={groupChangePending}
               onToggleMember={onToggleMember}
-            />
+            />}
             <button
               onClick={() => onRequestRemove(r.symbol)}
               className="opacity-0 group-hover:opacity-100 text-muted hover:text-danger transition-all duration-150 p-0.5 rounded hover:bg-elevated"
@@ -665,6 +671,12 @@ export function Watchlist() {
 
 function ChinaWatchlist({ active, marketControls }: { active: boolean; marketControls: React.ReactNode }) {
   const qc = useQueryClient()
+  const activeRef = useRef(active)
+  activeRef.current = active
+  useEffect(() => {
+    activeRef.current = active
+    return () => { activeRef.current = false }
+  }, [active])
   const [viewMode, setViewMode] = useState<'table' | 'card'>(() => {
     return (storage.watchlistView.get('table') as 'table' | 'card')
   })
@@ -694,12 +706,19 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
   const columnsLoaded = useRef(false)
 
   useEffect(() => {
-    if (columnsLoaded.current) return
-    columnsLoaded.current = true
-    loadColumnConfig().then(setColumns)
-  }, [])
+    if (!active || columnsLoaded.current) return
+    let current = true
+    // 每轮加载独立授权；隐藏后旧响应即使晚于重新激活返回也不能写入。
+    loadColumnConfig(() => current && activeRef.current).then(next => {
+      if (!current || !activeRef.current) return
+      columnsLoaded.current = true
+      setColumns(next)
+    })
+    return () => { current = false }
+  }, [active])
 
   const handleColumnsChange = useCallback((next: ColumnConfig[]) => {
+    if (!activeRef.current) return
     setColumns(next)
     saveColumnConfig(next)
   }, [])
@@ -790,13 +809,17 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
 
   const list = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
+    enabled: active,
+    subscribed: active,
     staleTime: 30_000,  // 清单慢变 (增删后 mutation 会失效), 减少切页重拉
   })
 
   const groupList = useQuery({
     queryKey: QK.watchlistGroups,
-    queryFn: api.watchlistGroups,
+    queryFn: watchlistGroupsQueryFn,
+    enabled: active,
+    subscribed: active,
   })
   const groups = groupList.data?.groups ?? []
   const activeGroupId = selectedGroup === 'all' || selectedGroup === 'ungrouped'
@@ -805,20 +828,21 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
 
   useEffect(() => {
     if (
-      selectedGroup !== 'all'
+      active && selectedGroup !== 'all'
       && selectedGroup !== 'ungrouped'
       && groupList.isSuccess
       && !groups.some(group => group.id === selectedGroup)
     ) {
       setSelectedGroup('all')
     }
-  }, [groupList.isSuccess, groups, selectedGroup])
+  }, [active, groupList.isSuccess, groups, selectedGroup])
 
   // enriched 数据 — 传入 ext_columns 参数
   const enriched = useQuery({
     queryKey: QK.watchlistEnriched(extColumnsParam),
     queryFn: () => api.watchlistEnriched(extColumnsParam || undefined),
-    enabled: (list.data?.symbols.length ?? 0) > 0,
+    enabled: active && (list.data?.symbols.length ?? 0) > 0,
+    subscribed: active,
   })
 
   // symbol 派生只依赖 enriched.data: 旧写法 symbols 每次渲染都是新引用 (击穿 memo)
@@ -845,7 +869,8 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
   const klineBatch = useQuery({
     queryKey: QK.watchlistKlineBatch(`${symbolsKey}|${candleDays}`),
     queryFn: () => api.klineDailyBatch(symbols, candleDays),
-    enabled: dailyKVisible && symbols.length > 0 && !groupCardsOpen,
+    enabled: active && dailyKVisible && symbols.length > 0 && !groupCardsOpen,
+    subscribed: active,
     staleTime: 5 * 60_000,  // 5 分钟内不重请求
     // 改蜡烛天数/增删自选时沿用上一份批量数据 (按 symbol 查表渲染, 旧键不会被读到),
     // 避免整列蜡烛闪空 — 与 Screener 批量查询同款
@@ -898,11 +923,13 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
       const reqSymbols = minuteRequestSymbolsRef.current ?? minuteSymbols
       return fetchMinuteBatchIncremental(qc, QK.minuteBatch(minuteSymbolsKey), reqSymbols, true)
     },
-    enabled: intradayVisible && minuteSymbols.length > 0 && !groupCardsOpen,
+    enabled: active && intradayVisible && minuteSymbols.length > 0 && !groupCardsOpen,
+    subscribed: active,
     staleTime: 10_000,
     // SSE tick 新鲜 (enriched 10s 内被行情推送刷新过) → 分时图已由下方续画本地
     // 跳动, 轮询降为 30s 兜底校准; tick 断流时回到用户设定间隔
     refetchInterval: () => {
+      if (!active) return false
       if (!(intradayRefreshEnabled && realtimeRunning)) return false
       // 非连续竞价时段 (盘后/周末/节假日) 分钟K不可变, 降为 60s 兜底而非按用户间隔空转;
       // 字段缺失 (旧后端) 时保持原行为
@@ -1038,6 +1065,7 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
   const handleCardCancelRemove = useCallback(() => setConfirmRemove(null), [])
   const handleCardRequestRemove = useCallback((sym: string) => setConfirmRemove(sym), [])
   const handleToggleMember = useCallback((symbol: string, groupId: string, member: boolean) => {
+    if (!activeRef.current) return
     if (member) addGroupMember.mutate({ symbol, groupId })
     else removeGroupMember.mutate({ symbol, groupId })
   }, [addGroupMember, removeGroupMember])
@@ -1280,18 +1308,26 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
   const lastVisibleKeyRef = useRef<string | null>(null)
   useEffect(() => {
     minuteRequestSymbolsRef.current = visibleCardSymbols
+    if (!active) return
     if (!minuteVisibleKey) return
     if (lastVisibleKeyRef.current === minuteVisibleKey) return
     const prevKey = lastVisibleKeyRef.current
     lastVisibleKeyRef.current = minuteVisibleKey
     if (prevKey === null) return   // 首次: 挂载播种轮已按全列表发出, 不额外触发
     // 视口集合变化 (滚动到新区段) → 防抖 300ms 补拉一次, 新滚入的 symbol 即时就绪
+    let pending = true
     const t = setTimeout(() => {
+      if (!activeRef.current) return
+      pending = false
       qc.invalidateQueries({ queryKey: QK.minuteBatch(minuteSymbolsKey) })
     }, 300)
-    return () => clearTimeout(t)
+    return () => {
+      clearTimeout(t)
+      // 未执行的视口补拉可在重新激活时重排，不能把“已排队”误当作“已完成”。
+      if (pending && lastVisibleKeyRef.current === minuteVisibleKey) lastVisibleKeyRef.current = prevKey
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [minuteVisibleKey, minuteSymbolsKey])
+  }, [active, minuteVisibleKey, minuteSymbolsKey])
 
   // 可见的 ext 列（卡片视图使用）
   const visibleExtCols = useMemo(
@@ -1313,6 +1349,7 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
 
   const renderStockCard = (r: any) => (
     <StockCard
+      pageActive={active}
       key={r.symbol}
       r={r}
       candleRows={klineData[r.symbol] ?? EMPTY_KLINE}
@@ -1394,10 +1431,11 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
               </button>
             )}
             <StockSearchBox
+              pageActive={active}
               onPreview={(sym, name) => { setPreviewSymbol(sym); setPreviewName(name) }}
               existingBySymbol={groupBySymbol}
               groups={groups}
-              onAdd={(symbol, groupId) => addMutation.mutate({ symbol, groupId })}
+              onAdd={(symbol, groupId) => { if (activeRef.current) addMutation.mutate({ symbol, groupId }) }}
               onToggleMember={handleToggleMember}
               preferredGroupId={activeGroupId}
               addPending={addMutation.isPending}
@@ -1458,7 +1496,7 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
               <Settings2 className="h-4 w-4" />
             </button>
             <button
-              onClick={() => enriched.refetch()}
+              onClick={() => { if (active) void enriched.refetch() }}
               disabled={enriched.isFetching}
               className="inline-flex items-center justify-center h-8 w-8 rounded-btn bg-elevated hover:bg-elevated/80 text-secondary hover:text-foreground transition-colors duration-150 ease-smooth disabled:opacity-50"
               title="刷新"
@@ -1484,7 +1522,7 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
                 symbols: sortedRows.map((row: any) => row.symbol),
                 viewMode,
                 selectedGroup,
-                refresh: () => enriched.refetch(),
+                refresh: () => { if (activeRef.current) return enriched.refetch() },
               }}
             />
           </div>
@@ -1694,7 +1732,7 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
                       {intradayChartVisible && !intradayAutoRefresh && (
                         <button
                           type="button"
-                          onClick={(event) => { event.stopPropagation(); minuteBatch.refetch() }}
+                          onClick={(event) => { event.stopPropagation(); if (active) void minuteBatch.refetch() }}
                           disabled={minuteBatch.isFetching}
                           className="inline-flex items-center justify-center w-5 h-5 rounded text-muted hover:text-accent hover:bg-accent/10 transition-colors disabled:opacity-40"
                           title="刷新分时数据"
@@ -1766,13 +1804,13 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
                             </div>
                           ) : (
                             <div className="flex items-center gap-1">
-                              <WatchlistGroupPicker
+                              {active && <WatchlistGroupPicker
                                 groups={groups}
                                 groupIds={r.group_ids ?? []}
                                 symbol={r.symbol}
                                 disabled={addGroupMember.isPending || removeGroupMember.isPending}
                                 onToggleMember={handleToggleMember}
-                              />
+                              />}
                               {selectedGroup !== 'all' && selectedGroup !== 'ungrouped' && r.group_ids?.includes(selectedGroup) && (
                                 <button
                                   onClick={() => handleToggleMember(r.symbol, selectedGroup, false)}
@@ -1918,7 +1956,7 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
 
       {/* 清空确认弹窗 */}
       <AnimatePresence>
-        {confirmClear && (
+        {active && confirmClear && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <motion.div
               initial={{ opacity: 0 }}
@@ -1960,22 +1998,22 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
       </AnimatePresence>
 
       {/* 列自定义侧栏 */}
-      <ColumnCustomizer
+      {active && <ColumnCustomizer
         columns={columns}
         onChange={handleColumnsChange}
         open={active && customizerOpen}
         onClose={() => setCustomizerOpen(false)}
-      />
+      />}
 
-      <StockPreviewDialog
+      {active && <StockPreviewDialog
         symbol={active ? previewSymbol : null}
         name={previewName}
         onClose={closePreview}
         navList={previewNavList.length > 0 ? previewNavList : previewNavItems}
         onNavigate={(sym, n) => { setPreviewSymbol(sym); setPreviewName(n ?? '') }}
-      />
+      />}
 
-      <DimensionMembersDialog
+      {active && <DimensionMembersDialog
         target={active ? dimensionTarget : null}
         onClose={() => setDimensionTarget(null)}
         onStockClick={(symbol, name, navList) => {
@@ -1985,7 +2023,7 @@ function ChinaWatchlist({ active, marketControls }: { active: boolean; marketCon
           // 成分列表作为切股导航 (成员可能不在自选列表, 不能退回 previewNavItems)
           setPreviewNavList(navList ?? previewNavItems)
         }}
-      />
+      />}
 
       <WatchlistImportDialog
         open={active && importOpen}

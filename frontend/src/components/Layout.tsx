@@ -1,3 +1,4 @@
+import { watchlistQueryFn, watchlistGroupsQueryFn } from '@/lib/watchlist-query-options'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, Suspense, type ReactNode } from 'react'
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -392,7 +393,7 @@ export function Layout() {
   const location = useLocation()
   const { data: watchlistGroupsData } = useQuery({
     queryKey: QK.watchlistGroups,
-    queryFn: api.watchlistGroups,
+    queryFn: watchlistGroupsQueryFn,
     enabled: groupsInNav,
     staleTime: 60_000,
   })
@@ -438,7 +439,7 @@ export function Layout() {
   const navGroupPctVisible = groupsInNav && sidebarFullyVisible && watchlistNavExpanded
   const { data: navWatchlist } = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
     enabled: navGroupPctVisible,
     staleTime: 60_000,
   })

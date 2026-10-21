@@ -1,3 +1,4 @@
+import { watchlistQueryFn, watchlistGroupsQueryFn } from '@/lib/watchlist-query-options'
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react'
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -739,13 +740,13 @@ function RulesList({ active, rulesQuery, onEdit }: {
   const hasGroupRules = rules.some(r => r.scope === 'watchlist_group')
   const groupsQ = useQuery({
     queryKey: QK.watchlistGroups,
-    queryFn: api.watchlistGroups,
+    queryFn: watchlistGroupsQueryFn,
     enabled: active && hasGroupRules,
     subscribed: active,
   })
   const watchlistQ = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
     enabled: active && hasGroupRules,
     subscribed: active,
   })

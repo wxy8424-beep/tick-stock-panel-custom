@@ -1,3 +1,4 @@
+import { watchlistQueryFn } from '@/lib/watchlist-query-options'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowDown, ArrowUp, BookmarkPlus, ChevronRight, ChevronsUpDown, Clock, Info, Layers3, ListFilter, ListPlus, Play, Search, Sparkles, Zap } from 'lucide-react'
@@ -132,7 +133,7 @@ function BatchDiscovery({ onInspect, focusFactor }: { onInspect: (factorName: st
   })
   const watchlist = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
     staleTime: 30_000,
   })
   const watchlistEntries = watchlist.data?.symbols ?? []

@@ -1,3 +1,4 @@
+import { watchlistQueryFn } from '@/lib/watchlist-query-options'
 import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -797,7 +798,7 @@ function StockPoolPicker({ value, onChange, assetType = 'stock' }: { value: stri
   // 自选列表 — 供「从自选导入」一键填入回测范围
   const watchlist = useQuery({
     queryKey: QK.watchlist,
-    queryFn: () => api.watchlistList(),
+    queryFn: watchlistQueryFn,
     staleTime: 30_000,
   })
   const watchlistEntries = watchlist.data?.symbols ?? []

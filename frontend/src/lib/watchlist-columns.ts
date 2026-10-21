@@ -132,7 +132,7 @@ export async function saveColumnConfig(columns: ColumnConfig[]): Promise<void> {
 }
 
 /** 加载列配置：优先后端，回退 localStorage，最终用默认值 */
-export async function loadColumnConfig(): Promise<ColumnConfig[]> {
+export async function loadColumnConfig(canPersist: () => boolean = () => true): Promise<ColumnConfig[]> {
   // 1. 尝试从后端加载
   try {
     const { api } = await import('@/lib/api')
@@ -140,7 +140,8 @@ export async function loadColumnConfig(): Promise<ColumnConfig[]> {
     if (res.columns && res.columns.length > 0) {
       const merged = mergeColumns(res.columns, BUILTIN_COLUMNS)
       // 同步到 localStorage
-      storage.watchlistColumns.set(serializeColumns(merged))
+      // 页面可能已隐藏/卸载；在实际写入点检查，而非仅忽略调用方的结果。
+      if (canPersist()) storage.watchlistColumns.set(serializeColumns(merged))
       return merged
     }
   } catch {

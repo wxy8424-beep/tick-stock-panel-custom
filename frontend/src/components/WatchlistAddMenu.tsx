@@ -1,8 +1,8 @@
+import { watchlistGroupsQueryFn } from '@/lib/watchlist-query-options'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Check, Folder, Inbox, List, LoaderCircle, RefreshCw } from 'lucide-react'
-import { api } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
 import { resolveWatchlistGroupColor } from '@/lib/watchlist-group-colors'
 
@@ -54,7 +54,7 @@ export function WatchlistGroupMenu({
 
   const groupsQuery = useQuery({
     queryKey: QK.watchlistGroups,
-    queryFn: api.watchlistGroups,
+    queryFn: watchlistGroupsQueryFn,
     enabled: open,
     staleTime: 60_000,
   })

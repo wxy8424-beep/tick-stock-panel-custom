@@ -1,7 +1,54 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mergeColumns } from './list-columns'
-import { BUILTIN_COLUMNS, COLUMN_GROUPS } from './watchlist-columns'
+import { BUILTIN_COLUMNS, COLUMN_GROUPS, loadColumnConfig } from './watchlist-columns'
+import { storage } from './storage'
+import { api } from './api'
+
+const loader = vi.hoisted(() => ({ get: vi.fn() }))
+beforeEach(() => { vi.spyOn(api, 'watchlistColumns').mockImplementation(loader.get) })
+afterEach(() => { vi.restoreAllMocks(); loader.get.mockReset() })
+
+describe('column loading persistence boundary', () => {
+  const columns = [{ ...BUILTIN_COLUMNS[0] }, { ...BUILTIN_COLUMNS[1] }]
+  it('keeps the existing no-argument loader write and returned column semantics', async () => {
+    loader.get.mockResolvedValue({ columns })
+    const write = vi.spyOn(storage.watchlistColumns, 'set').mockImplementation(() => {})
+    const result = await loadColumnConfig()
+    expect(result.map(c => c.id)).toContain('builtin:price')
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+  it('checks live permission after the awaited response, not when the request starts', async () => {
+    let resolve!: (v: unknown) => void
+    loader.get.mockReturnValue(new Promise(r => { resolve = r }))
+    const write = vi.spyOn(storage.watchlistColumns, 'set').mockImplementation(() => {})
+    let active = true
+    const result = loadColumnConfig(() => active)
+    await vi.waitFor(() => expect(loader.get).toHaveBeenCalledTimes(1))
+    active = false; resolve({ columns })
+    expect((await result).length).toBeGreaterThan(0)
+    expect(write).not.toHaveBeenCalled()
+    loader.get.mockResolvedValue({ columns }); active = true
+    await loadColumnConfig(() => active)
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+  it('leaves other consumers independent while a page denies its own write', async () => {
+    loader.get.mockResolvedValue({ columns })
+    const write = vi.spyOn(storage.watchlistColumns, 'set').mockImplementation(() => {})
+    await Promise.all([loadColumnConfig(() => false), loadColumnConfig()])
+    expect(api.watchlistColumns).toHaveBeenCalledTimes(2)
+    expect(write).toHaveBeenCalledTimes(1)
+  })
+  it('retains local fallback and defaults without writing on source failure', async () => {
+    loader.get.mockRejectedValue(new Error('synthetic unavailable'))
+    const read = vi.spyOn(storage.watchlistColumns, 'get').mockReturnValue(columns)
+    const write = vi.spyOn(storage.watchlistColumns, 'set').mockImplementation(() => {})
+    expect((await loadColumnConfig(() => false))[1].id).toBe(columns[1].id)
+    read.mockReturnValue([])
+    expect(await loadColumnConfig()).toEqual(BUILTIN_COLUMNS)
+    expect(write).not.toHaveBeenCalled()
+  })
+})
 
 // #328: 自选页新增 今开/最高/最低/昨收/成交量/涨停价/跌停价 七列。
 // 关键兼容契约: 老用户的持久化配置不含这些列 id, mergeColumns 必须把它们

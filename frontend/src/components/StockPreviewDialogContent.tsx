@@ -1,3 +1,4 @@
+import { watchlistQueryFn } from '@/lib/watchlist-query-options'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -102,7 +103,7 @@ export function StockPreviewDialogContent({ symbol, name, onClose, triggerInfo, 
 
   const watchlist = useQuery({
     queryKey: QK.watchlist,
-    queryFn: api.watchlistList,
+    queryFn: watchlistQueryFn,
     enabled: !!symbol,
   })
   const monitorRules = useQuery({
