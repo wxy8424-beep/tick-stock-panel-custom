@@ -1,7 +1,8 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { USQuoteSnapshotDialog } from './USQuoteSnapshotDialog'
+import { USRankingPanel } from './USRankingPanel'
 import { Check, Gauge, GripVertical, RefreshCw, RotateCcw } from 'lucide-react'
 import { api, type MarketSnapshotRow, type USSection, type USSectionKey, type USStats } from '@/lib/api'
 import { QK } from '@/lib/queryKeys'
@@ -56,6 +57,8 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
   const codeId = useId()
   const [code, setCode] = useState('')
   const [codeError, setCodeError] = useState('')
+  const [ranking, setRanking] = useState<'gainers' | 'losers' | 'turnover' | null>(null)
+  const rankingOpener = useRef<HTMLButtonElement | null>(null)
   const entry = location.state?.usQuote as { symbols?: unknown; returnTo?: unknown } | undefined
   const navigation = Array.isArray(entry?.symbols) ? [...new Set(entry.symbols.filter(validSymbol))].slice(0, 40) : []
   const href = (symbol: string) => { const next = new URLSearchParams(params); next.set('market', 'US'); next.set('quote_symbol', symbol); return location.pathname + '?' + next }
@@ -161,6 +164,10 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
       {codeError && <p id={`${codeId}-error`} role="alert" className="mt-1 break-words text-xs text-warning">{codeError}</p>}
     </form>
     <p className="mb-1.5 break-words text-[10px] text-muted">{data?.sample.coverage || '当前可获取美股样本，非全市场'} · 成功 {data?.sample.received ?? '—'}/{data?.sample.requested ?? '—'}{universe && <> · {coverageStatus} · 缺失 {data?.sample.failed ?? 0} · 失败批次 {data?.sample.failed_batches ?? 0} · 拒绝代码 {data?.sample.rejected_symbols ?? 0} · 统计日期 {data?.sample.statistics_date || '—'}（纽约） · 纳入统计 {data?.sample.statistics_received ?? '—'} · 排除旧日报价 {data?.sample.stale_quote_count ?? 0} · 完成 {dateTime(data?.sample.completed_at)} · 逐批快照，非同一瞬间；常规时段每轮后30秒刷新，其余时段5分钟。{data?.sample.error && ` 原因：${hkError(data.sample.error)}`}</>} · 报价可能停留在标的最近交易时刻；历史日期暂不可用；{calendarLabel(data?.market)}。未启用盘前/盘后行情。</p>
+    <div role="group" aria-label="查看美股已返回榜单" className="mb-2 flex min-w-0 flex-wrap gap-2">{([['gainers', '涨幅榜'], ['losers', '跌幅榜'], ['turnover', '成交额榜']] as const).map(([key, label]) => <button key={key} type="button" aria-label={`查看${label}已返回记录`} aria-expanded={ranking === key}
+      onClick={event => { rankingOpener.current = event.currentTarget; setRanking(key) }} className="rounded-btn border border-border px-3 py-1.5 text-xs">查看{label}已返回记录</button>)}</div>
+    {ranking && <USRankingPanel key={ranking} title={labels[ranking]} section={data?.market.code === 'US' ? data[ranking] : undefined} loading={query.isLoading} failed={query.isError} retained={query.isPlaceholderData}
+      href={href} onOpen={open} onClose={() => { setRanking(null); rankingOpener.current?.focus() }} />}
     <DashboardGrid items={items} onItemsChange={next => setItems(normalizeUSLayout(toBlob(next)))} editing={editing} renderItem={render} widgetLabels={labels} rowHeight={48} gap={10} />
     {preview && <USQuoteSnapshotDialog symbol={symbols[0]} invalid={invalid} quote={focused} responseTime={data?.updated_at}
       metadata={!query.isPlaceholderData && data?.market.code === 'US' && data.focus_symbol === focus ? data.focus_quote_metadata : undefined}

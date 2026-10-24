@@ -74,3 +74,18 @@ it('submits a US code through the actual Dashboard route without CN APIs, new pe
   expect(write).not.toHaveBeenCalled()
   expect(alert).not.toHaveBeenCalled()
 })
+it('keeps returned-ranking state US-only and clears it after visiting CN', async () => {
+  await render('/?market=US')
+  const count = vi.mocked(api.usDashboard).mock.calls.length
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="查看涨幅榜已返回记录"]')!.click())
+  expect(host.querySelector('[aria-label="美股已返回榜单"]')).not.toBeNull()
+  expect(api.usDashboard).toHaveBeenCalledTimes(count)
+  expect(calls.cn).not.toHaveBeenCalled()
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[aria-label="市场选择"] button')].find(b => b.textContent === 'A股')!.click()); await settle()
+  expect(host.querySelector('[aria-label="美股已返回榜单"]')).toBeNull()
+  expect(host.querySelector('[aria-label="查看涨幅榜已返回记录"]')).toBeNull()
+  expect(calls.cn).toHaveBeenCalled()
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>('[aria-label="市场选择"] button')].find(b => b.textContent === '美股')!.click()); await settle()
+  expect(host.querySelector('[aria-label="查看涨幅榜已返回记录"]')).not.toBeNull()
+  expect(host.querySelector('[aria-label="美股已返回榜单"]')).toBeNull()
+})

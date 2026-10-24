@@ -56,6 +56,37 @@ it('keeps CN 13 slot types with spacious US metrics, Chinese labels and independ
   expect(JSON.parse(localStorage.getItem(US_LAYOUT_KEY)!).items).toEqual(comfortable)
   expect(localStorage.getItem('cn-layout-sentinel')).toBe('untouched')
 })
+it('views and searches the entire returned ranking without extra requests or storage, preserving quote navigation', async () => {
+  const data = response()
+  data.gainers = { ...data.gainers, data: Array.from({ length: 20 }, (_, i) => ({ symbol: `STOCK${i}.US`, market: 'US', name: `合成榜单${i}`, close: i + 1, change_pct: i / 100 })) }
+  mock.get.mockImplementation(symbol => Promise.resolve({ ...data, focus_symbol: symbol ?? null, focus_quote: symbol ? { symbol, close: 42 } : null }))
+  await render()
+  const writes = vi.spyOn(Storage.prototype, 'setItem')
+  const count = mock.get.mock.calls.length
+  const opener = host.querySelector<HTMLButtonElement>('[aria-label="查看涨幅榜已返回记录"]')
+  expect(opener).not.toBeNull()
+  await act(async () => opener!.click()); await settle()
+  const panel = host.querySelector<HTMLElement>('[aria-label="美股已返回榜单"]')!
+  expect(panel.querySelectorAll('tbody tr')).toHaveLength(20)
+  const input = panel.querySelector<HTMLInputElement>('input')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'STOCK19')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  expect(panel.querySelectorAll('tbody tr')).toHaveLength(1)
+  expect(mock.get).toHaveBeenCalledTimes(count)
+  expect(writes).not.toHaveBeenCalled()
+  await act(async () => panel.querySelector<HTMLAnchorElement>('tbody a')!.click()); await settle()
+  expect(mock.get).toHaveBeenLastCalledWith('STOCK19.US')
+  expect(host.querySelector('[role="dialog"]')?.textContent).toContain('STOCK19.US')
+  expect([...host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter(b => ['上一只', '下一只'].includes(b.textContent!)).every(b => b.disabled)).toBe(true)
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="关闭快照"]')!.click()); await settle()
+  expect(panel.querySelector('input')?.value).toBe('STOCK19')
+  await act(async () => panel.querySelector<HTMLButtonElement>('[aria-label="关闭已返回榜单"]')!.click()); await settle()
+  expect(host.querySelector('[aria-label="美股已返回榜单"]')).toBeNull()
+  expect(document.activeElement).toBe(opener)
+  writes.mockRestore()
+})
 it('uses backend post-market state and keeps the existing snapshot-only contract', async () => {
   const data = response()
   data.market = { ...data.market, session_state: 'post_market', calendar_status: 'covered' }
