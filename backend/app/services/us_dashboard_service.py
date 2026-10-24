@@ -42,6 +42,28 @@ def _is_us(symbol) -> bool:
         return False
 
 
+def _focus_quote_metadata(symbol, quote=None, quoted=None):
+    """Bind provenance to the finite quote section, never Universe rankings."""
+    status = "available" if quote is not None else (
+        "unavailable" if quoted is None else "error" if quoted["status"] == "error" else "empty"
+    )
+    reason = {
+        "available": None,
+        "unavailable": "报价供应商未配置或不可用，未取得匹配报价",
+        "error": f"报价获取失败（{quoted.get('error') or 'unknown'}）" if quoted else None,
+        "empty": "该报价区段未返回该证券的匹配报价，具体原因未提供",
+    }[status]
+    source = quoted.get("source") if quote is not None and quoted else None
+    acquired_at = quoted.get("updated_at") if quote is not None and quoted else None
+    return {
+        "symbol": symbol, "status": status, "reason": reason,
+        "source": source,
+        "source_reason": None if source else "未取得匹配报价的来源元数据",
+        "acquired_at": acquired_at,
+        "acquired_at_reason": None if acquired_at else "未取得匹配报价区段的成功获取时间",
+    }
+
+
 def _provider():
     from app.data_providers.custom import get_provider
 
@@ -212,6 +234,7 @@ class USDashboardService:
         session = get_market_session("US", now)
         result = {"market": session.public_metadata(),
                   "updated_at": now.isoformat(), "focus_symbol": symbol, "focus_quote": None,
+                  "focus_quote_metadata": _focus_quote_metadata(symbol),
                   "sample": {"coverage": "六只代表股票及当前异动/已获取标的 · 最多40只 · 非全美股市场", "requested": 0, "received": 0}}
         result.update({
             "radar": unavailable("暂无经过验证的美股情绪雷达数据源"),
@@ -278,6 +301,8 @@ class USDashboardService:
         focus = symbol or (rows[0]["symbol"] if rows else None)
         result["focus_symbol"] = focus
         result["focus_quote"] = next((row for row in rows if row["symbol"] == focus), None)
+        # Capture before the optional Universe branch replaces quoted/rows.
+        result["focus_quote_metadata"] = _focus_quote_metadata(focus, result["focus_quote"], quoted)
         for row in events["data"] or []:
             row_name = names.get(row["symbol"], {}).get("name")
             if row_name:

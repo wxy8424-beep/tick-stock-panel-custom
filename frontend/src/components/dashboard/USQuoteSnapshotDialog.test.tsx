@@ -48,3 +48,43 @@ it('exposes disabled navigation reasons and supports Escape with focus restorati
   expect(p.onClose).toHaveBeenCalledTimes(1)
   await act(async () => root.render(null)); expect(document.activeElement).toBe(opener); opener.remove()
 })
+
+const metadata = () => ({ symbol: 'AAPL.US', status: 'available' as const, source: 'Synthetic finite quote source', source_reason: null,
+  acquired_at: '2026-10-08T14:01:00Z', acquired_at_reason: null, reason: null })
+it('separates acquisition, vendor quote and response times without claiming freshness', async () => {
+  await render({ ...props(), metadata: metadata(), responseTime: '2026-10-08T14:02:00Z' })
+  const value = host.textContent!
+  expect(value).toContain('Synthetic finite quote source')
+  for (const text of ['10:00:00', '10:01:00', '10:02:00', '成功获取完成时间', '缓存命中保留原时间', '不代表实时', '新鲜度无法判定']) expect(value).toContain(text)
+})
+it('keeps old response metadata explicitly unknown', async () => {
+  await render()
+  expect(host.textContent).toContain('旧接口未提供独立元数据')
+  expect(host.textContent).not.toContain('Longbridge')
+})
+it.each(['NVDA.US', null])('rejects metadata identity %s without leaking its provenance or timestamp', async symbol => {
+  await render({ ...props(), metadata: { ...metadata(), symbol } })
+  expect(host.textContent).toContain('元数据证券身份或状态不一致')
+  expect(host.textContent).not.toContain('Synthetic finite quote source')
+  expect(host.textContent).not.toContain('10:01:00')
+})
+it.each(['not-a-time', '2026-10-08T14:01:00', null])('does not invent an acquisition time for %s', async acquired_at => {
+  await render({ ...props(), metadata: { ...metadata(), acquired_at } })
+  expect(host.textContent).toContain('时间无效/缺少时区')
+  expect(host.textContent).not.toMatch(/Invalid Date|NaN/)
+})
+it.each(['empty', 'error', 'unavailable'] as const)('shows %s reasons with nullable source and acquisition', async status => {
+  await render({ ...props(), quote: null, metadata: { ...metadata(), status, source: null, acquired_at: null, source_reason: '合成来源缺失原因', acquired_at_reason: '合成获取时间缺失原因', reason: '合成状态原因' } })
+  for (const reason of ['合成来源缺失原因', '合成获取时间缺失原因', '合成状态原因']) expect(host.textContent).toContain(reason)
+})
+it('keeps a failed HTTP refresh distinct from cached successful acquisition metadata', async () => {
+  await render({ ...props(), failed: true, metadata: metadata() })
+  expect(host.textContent).toContain('保留同证券缓存报价')
+  expect(host.textContent).toContain('已取得匹配报价（不代表实时）')
+  expect(host.textContent).toContain('10:01:00')
+})
+it('does not accept available provenance without a matching quote', async () => {
+  await render({ ...props(), quote: null, metadata: metadata() })
+  expect(host.textContent).toContain('元数据证券身份或状态不一致')
+  expect(host.textContent).not.toContain('Synthetic finite quote source')
+})

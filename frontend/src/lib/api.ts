@@ -107,9 +107,20 @@ export interface USStats {
   strong_up: number; strong_down: number; avg_pct: number | null; median_pct: number | null
   amount_total: number | null; amount_count: number
 }
+export interface USFocusQuoteMetadata {
+  symbol: string | null
+  status: 'available' | 'empty' | 'error' | 'unavailable'
+  source: string | null
+  source_reason: string | null
+  /** Finite quote section acquisition completion; not vendor quote time or expiry. */
+  acquired_at: string | null
+  acquired_at_reason: string | null
+  reason: string | null
+}
 export type USDashboardResponse = Record<USSectionKey, USSection> & {
   market: MarketSessionInfo & { code: 'US'; timezone: string; local_time: string }
   updated_at: string; focus_symbol: string | null; focus_quote: MarketSnapshotRow | null
+  focus_quote_metadata?: USFocusQuoteMetadata | null
   sample: {
     coverage: string; requested: number; received: number; scope?: 'provider_universe'
     failed?: number; failed_batches?: number; rejected_symbols?: number; status?: 'loading' | 'refreshing' | 'ready' | 'partial' | 'stale' | 'unavailable'

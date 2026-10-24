@@ -163,6 +163,7 @@ export function UnitedStatesDashboard({ onMarketChange }: { onMarketChange: (mar
     <p className="mb-1.5 break-words text-[10px] text-muted">{data?.sample.coverage || '当前可获取美股样本，非全市场'} · 成功 {data?.sample.received ?? '—'}/{data?.sample.requested ?? '—'}{universe && <> · {coverageStatus} · 缺失 {data?.sample.failed ?? 0} · 失败批次 {data?.sample.failed_batches ?? 0} · 拒绝代码 {data?.sample.rejected_symbols ?? 0} · 统计日期 {data?.sample.statistics_date || '—'}（纽约） · 纳入统计 {data?.sample.statistics_received ?? '—'} · 排除旧日报价 {data?.sample.stale_quote_count ?? 0} · 完成 {dateTime(data?.sample.completed_at)} · 逐批快照，非同一瞬间；常规时段每轮后30秒刷新，其余时段5分钟。{data?.sample.error && ` 原因：${hkError(data.sample.error)}`}</>} · 报价可能停留在标的最近交易时刻；历史日期暂不可用；{calendarLabel(data?.market)}。未启用盘前/盘后行情。</p>
     <DashboardGrid items={items} onItemsChange={next => setItems(normalizeUSLayout(toBlob(next)))} editing={editing} renderItem={render} widgetLabels={labels} rowHeight={48} gap={10} />
     {preview && <USQuoteSnapshotDialog symbol={symbols[0]} invalid={invalid} quote={focused} responseTime={data?.updated_at}
+      metadata={!query.isPlaceholderData && data?.market.code === 'US' && data.focus_symbol === focus ? data.focus_quote_metadata : undefined}
       loading={query.isLoading || query.isPlaceholderData} fetching={query.isFetching} failed={query.isError} onRetry={() => { if (!invalid) void query.refetch() }} onClose={close}
       previous={position > 0 ? navigation[position - 1] : undefined} next={position >= 0 ? navigation[position + 1] : undefined} onNavigate={changeStock} />}
   </div>

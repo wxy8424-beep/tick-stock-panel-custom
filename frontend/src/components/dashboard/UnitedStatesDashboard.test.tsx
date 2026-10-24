@@ -203,13 +203,14 @@ it('preserves native link behavior and browser back/forward without changing sav
 })
 it('late AAPL completion cannot overwrite NVDA after a rapid URL switch', async () => {
   let resolve!: (value: USDashboardResponse) => void
-  mock.get.mockImplementation(symbol => symbol === 'AAPL.US' ? new Promise(yes => { resolve = yes }) : Promise.resolve(response(symbol)))
+  mock.get.mockImplementation(symbol => symbol === 'AAPL.US' ? new Promise(yes => { resolve = yes }) : Promise.resolve({ ...response(symbol), focus_quote_metadata: { symbol: symbol!, status: 'available', source: 'NVDA matching source', source_reason: null, acquired_at: '2026-10-08T14:01:00Z', acquired_at_reason: null, reason: null } }))
   await render('/?market=US&quote_symbol=AAPL.US')
   expect(host.querySelector('[role="dialog"]')?.textContent).toContain('正在获取')
   await act(async () => host.querySelector<HTMLButtonElement>('[data-switch]')!.click()); await settle()
-  await act(async () => resolve({ ...response('AAPL.US'), focus_quote: { symbol: 'AAPL.US', close: 777 } })); await settle()
+  await act(async () => resolve({ ...response('AAPL.US'), focus_quote: { symbol: 'AAPL.US', close: 777 }, focus_quote_metadata: { symbol: 'AAPL.US', status: 'available', source: 'AAPL obsolete source', source_reason: null, acquired_at: '2020-01-01T00:00:00Z', acquired_at_reason: null, reason: null } })); await settle()
   const dialog = host.querySelector('[role="dialog"]')!
   expect(dialog.textContent).toContain('NVDA.US'); expect(dialog.textContent).not.toContain('777')
+  expect(dialog.textContent).toContain('NVDA matching source'); expect(dialog.textContent).not.toContain('AAPL obsolete source')
   expect(client.getQueryData(['us-dashboard', 'AAPL.US'])).toBeDefined()
 })
 it('retries a failed quote without loading CN APIs and does not infer focus staleness from coverage', async () => {

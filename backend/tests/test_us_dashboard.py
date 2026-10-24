@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace as N
 
 import pytest
@@ -196,3 +196,108 @@ def test_api_validates_before_provider_and_has_no_cn_write_path(monkeypatch):
         response = client.get("/api/dashboard/us?symbol=AAPL.US")
     assert response.status_code == 200
     assert response.json()["focus_symbol"] == "AAPL.US"
+    assert response.json()["focus_quote_metadata"]["symbol"] == "AAPL.US"
+
+
+def test_focus_metadata_matches_quote_without_new_provider_requests():
+    svc, provider = service()
+    result = svc.get("AAPL.US", [])
+    assert result["focus_quote_metadata"] == {
+        "symbol": "AAPL.US", "status": "available",
+        "source": "Longbridge · 有限观察样本报价", "source_reason": None,
+        "acquired_at": "2026-10-08T14:00:00+00:00", "acquired_at_reason": None,
+        "reason": None,
+    }
+    assert [method for _, method, _, _ in provider.calls] == [
+        "top_movers", "static_info", "quote", "quote", "option_volume",
+    ]
+
+
+def test_focus_metadata_retains_cached_acquisition_and_expiry_failure_is_not_success():
+    tick = [0]
+    svc, provider = service(monotonic=lambda: tick[0])
+    origin = datetime(2026, 10, 8, 14, tzinfo=UTC)
+    svc.clock = lambda: origin + timedelta(seconds=tick[0])
+    first = svc.get("AAPL.US", [])
+    tick[0] = 10
+    cached = svc.get("AAPL.US", [])
+    assert cached["updated_at"] != first["updated_at"]
+    assert cached["focus_quote_metadata"] == first["focus_quote_metadata"]
+    tick[0] = 31
+    provider.fail.add("quote")
+    failed = svc.get("AAPL.US", [])
+    metadata = failed["focus_quote_metadata"]
+    assert metadata["status"] == "error"
+    assert failed["focus_quote"] is None
+    assert metadata["source"] is metadata["acquired_at"] is None
+    assert metadata["source_reason"] and metadata["acquired_at_reason"] and metadata["reason"]
+    assert "fake-access-token" not in str(failed)
+    provider.fail.clear()
+    tick[0] = 62
+    assert svc.get("AAPL.US", [])["focus_quote_metadata"]["acquired_at"] != first["focus_quote_metadata"]["acquired_at"]
+
+
+@pytest.mark.parametrize("empty_all", [False, True])
+def test_missing_focus_quote_keeps_metadata_null_and_does_not_borrow_another_symbol(empty_all):
+    class Provider(FakeProvider):
+        def dashboard_request(self, kind, method, *args, **kwargs):
+            rows = super().dashboard_request(kind, method, *args, **kwargs)
+            if method == "quote":
+                return [] if empty_all else [row for row in rows if row.symbol != "AAPL.US"]
+            return rows
+    svc, _ = service(Provider())
+    result = svc.get("AAPL.US", [])
+    metadata = result["focus_quote_metadata"]
+    assert result["focus_quote"] is None
+    assert metadata["symbol"] == "AAPL.US" and metadata["status"] == "empty"
+    assert metadata["source"] is metadata["acquired_at"] is None
+    assert metadata["source_reason"] and metadata["acquired_at_reason"] and metadata["reason"]
+
+
+@pytest.mark.parametrize("symbol", [None, "AAPL.US"])
+def test_missing_provider_metadata_is_unavailable_and_redacted(symbol):
+    def missing():
+        raise RuntimeError("fake-access-token")
+    result = USDashboardService(missing).get(symbol, [])
+    metadata = result["focus_quote_metadata"]
+    assert metadata["symbol"] == result["focus_symbol"] == symbol
+    assert metadata["status"] == "unavailable"
+    assert metadata["source"] is metadata["acquired_at"] is None
+    assert metadata["source_reason"] and metadata["acquired_at_reason"] and metadata["reason"]
+    assert "fake-access-token" not in str(metadata)
+
+
+def test_metadata_survives_name_failure_but_is_rebuilt_on_provider_replacement():
+    providers = [FakeProvider()]
+    providers[0].fail.add("static_info")
+    svc = USDashboardService(lambda: providers[0], clock=lambda: datetime(2026, 10, 8, 14, tzinfo=UTC))
+    first = svc.get(None, [])
+    assert first["focus_quote_metadata"]["symbol"] == first["focus_quote"]["symbol"]
+    assert first["focus_quote_metadata"]["status"] == "available"
+    assert "currency" not in first["focus_quote"]
+    providers[0] = FakeProvider()
+    svc.clock = lambda: datetime(2026, 10, 8, 15, tzinfo=UTC)
+    second = svc.get("AAPL.US", [])
+    assert second["focus_quote_metadata"]["acquired_at"] == "2026-10-08T15:00:00+00:00"
+    assert second["focus_quote"]["currency"] == "USD"
+    assert len(providers[0].calls) == 5
+
+
+@pytest.mark.parametrize("quote_fails", [False, True])
+def test_universe_state_cannot_replace_focus_metadata(quote_fails):
+    svc, provider = service()
+    if quote_fails:
+        provider.fail.add("quote")
+    svc.universe_enabled = True
+    # No worker or real provider: isolate the existing published-universe branch.
+    svc._ensure_universe_worker = lambda: None
+    svc.universe_provider = provider
+    svc.universe_snapshot = ([{"symbol": "NVDA.US", "close": 999, "change_pct": .1, "amount": 2}],
+                             {"completed_at": "2020-01-01T00:00:00Z", "requested": 1, "received": 1})
+    svc.universe_status = "stale"
+    result = svc.get("AAPL.US", [])
+    metadata = result["focus_quote_metadata"]
+    assert metadata["symbol"] == "AAPL.US"
+    assert metadata["status"] == ("error" if quote_fails else "available")
+    assert metadata["acquired_at"] == (None if quote_fails else "2026-10-08T14:00:00+00:00")
+    assert result["sample"]["completed_at"] == "2020-01-01T00:00:00Z"
