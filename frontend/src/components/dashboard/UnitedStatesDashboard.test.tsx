@@ -87,6 +87,23 @@ it('views and searches the entire returned ranking without extra requests or sto
   expect(document.activeElement).toBe(opener)
   writes.mockRestore()
 })
+it('applies local percentage conditions without new queries and opens only the matched navigation list', async () => {
+  await render()
+  const count = mock.get.mock.calls.length
+  const writes = vi.spyOn(Storage.prototype, 'setItem')
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="查看涨幅榜已返回记录"]')!.click())
+  const input = host.querySelector<HTMLInputElement>('[aria-label="涨跌幅下限（%）"]')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '9'); input.dispatchEvent(new Event('input', { bubbles: true })) })
+  await act(async () => host.querySelector<HTMLFormElement>('form[aria-label="已返回记录条件"]')!.requestSubmit())
+  const panel = host.querySelector<HTMLElement>('[aria-label="美股已返回榜单"]')!
+  expect(panel.querySelectorAll('tbody tr')).toHaveLength(1)
+  expect(panel.querySelector('tbody a')?.textContent).toBe('NVDA.US')
+  expect(mock.get).toHaveBeenCalledTimes(count); expect(writes).not.toHaveBeenCalled()
+  await act(async () => panel.querySelector<HTMLAnchorElement>('tbody a')!.click()); await settle()
+  expect(mock.get).toHaveBeenLastCalledWith('NVDA.US')
+  expect([...host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter(button => ['上一只', '下一只'].includes(button.textContent!)).every(button => button.disabled)).toBe(true)
+  writes.mockRestore()
+})
 it('uses backend post-market state and keeps the existing snapshot-only contract', async () => {
   const data = response()
   data.market = { ...data.market, session_state: 'post_market', calendar_status: 'covered' }

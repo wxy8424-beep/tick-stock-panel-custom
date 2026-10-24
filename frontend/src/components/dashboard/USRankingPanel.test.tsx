@@ -78,7 +78,8 @@ it('shows empty search, missing and malformed data with no retry placeholder but
   await render({ ...section(), data: {} }); expect(host.textContent).toContain('榜单暂不可用')
   await render({ ...section(), status: 'unavailable', error: '合成缺失原因', data: null }); expect(host.textContent).toContain('合成缺失原因')
   expect(host.textContent).toContain('记录数量：—')
-  expect(host.querySelectorAll('button')).toHaveLength(1)
+  expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['关闭榜单', '应用条件', '重置条件'])
+  expect([...host.querySelectorAll('button')].some(button => button.textContent === '重试')).toBe(false)
   await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="关闭已返回榜单"]')!.click())
   expect(onClose).toHaveBeenCalledTimes(1)
 })
@@ -89,4 +90,66 @@ it('keeps loading, retained placeholder and failed cached data distinct', async 
   expect(order()).toEqual(rows.map(row => row.symbol))
   expect(host.querySelector('[role="region"]')?.getAttribute('tabindex')).toBe('0')
   expect(host.querySelector('[role="region"] > div')?.className).not.toContain('overflow-x-auto')
+})
+
+async function filterInput(label: string, value: string) {
+  const input = host.querySelector<HTMLInputElement>(`input[aria-label="${label}"]`)!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })) })
+}
+async function applyConditions() { await act(async () => host.querySelector<HTMLFormElement>('form[aria-label="已返回记录条件"]')!.requestSubmit()) }
+async function chooseCurrency(value: string) {
+  const select = host.querySelector<HTMLSelectElement>('select[aria-label="按接口币种过滤"]')!
+  await act(async () => { select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) })
+}
+it('applies percentage bounds as percent units with inclusive edges and excludes unknowns only while constrained', async () => {
+  await render()
+  await filterInput('涨跌幅下限（%）', '-1'); await filterInput('涨跌幅上限（%）', '2')
+  expect(order()).toEqual(rows.map(row => row.symbol))
+  await applyConditions()
+  expect(order()).toEqual(['AAPL.US', 'NVDA.US'])
+  await filterInput('涨跌幅下限（%）', '2'); await applyConditions()
+  expect(order()).toEqual(['AAPL.US'])
+  await act(async () => host.querySelector<HTMLButtonElement>('button[type="reset"]')!.click())
+  expect(order()).toEqual(rows.map(row => row.symbol))
+})
+it('requires a reported currency for price bounds and never mixes unknown or other currencies', async () => {
+  await render({ ...section(), data: [...rows, { symbol: 'HKDPRICE.US', currency: 'HKD', close: 10 }] })
+  await filterInput('价格下限（原币）', '10'); await filterInput('价格上限（原币）', '10'); await applyConditions()
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('先选择明确币种')
+  expect(order()).toHaveLength(4)
+  await chooseCurrency('USD'); await applyConditions()
+  expect(order()).toEqual(['NVDA.US'])
+  await chooseCurrency('HKD'); await applyConditions()
+  expect(order()).toEqual(['HKDPRICE.US'])
+})
+it.each(['NaN', 'Infinity', '0x10', '2%', 'abc'])('rejects invalid bound %s without applying it or replacing existing results', async bound => {
+  await render()
+  await filterInput('涨跌幅下限（%）', '2'); await applyConditions()
+  expect(order()).toEqual(['AAPL.US'])
+  await filterInput('涨跌幅下限（%）', bound); await applyConditions()
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('条件未应用')
+  expect(order()).toEqual(['AAPL.US'])
+})
+it('rejects reversed ranges, preserves search on reset, and performs no requests/persistence/notification', async () => {
+  const fetch = vi.fn(), notification = vi.fn(); vi.stubGlobal('fetch', fetch); vi.stubGlobal('Notification', notification)
+  const write = vi.spyOn(Storage.prototype, 'setItem')
+  await render()
+  await filterInput('涨跌幅下限（%）', '3'); await filterInput('涨跌幅上限（%）', '2'); await applyConditions()
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('下限不能大于上限')
+  const search = host.querySelector<HTMLInputElement>('[aria-label="搜索已返回证券"]')!
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, 'NVDA'); search.dispatchEvent(new Event('input', { bubbles: true })) })
+  await act(async () => host.querySelector<HTMLButtonElement>('button[type="reset"]')!.click())
+  expect(order()).toEqual(['NVDA.US']); expect(search.value).toBe('NVDA')
+  expect(fetch).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled(); expect(notification).not.toHaveBeenCalled()
+})
+it('keeps actual zero distinct from missing values and keeps a disappearing currency selection explicit', async () => {
+  await render({ ...section(), data: [...rows, { symbol: 'ZERO.US', currency: 'USD', close: 0, change_pct: 0 }, { symbol: 'NULL.US', currency: 'USD', close: null, change_pct: null }] })
+  await chooseCurrency('USD')
+  await filterInput('价格下限（原币）', '0'); await filterInput('价格上限（原币）', '0')
+  await filterInput('涨跌幅下限（%）', '0'); await filterInput('涨跌幅上限（%）', '0'); await applyConditions()
+  expect(order()).toEqual(['ZERO.US'])
+  await render({ ...section(), data: [] })
+  expect(host.querySelector<HTMLSelectElement>('select')?.value).toBe('USD')
+  expect(host.querySelector('select')?.textContent).toContain('USD（本次未返回）')
+  expect(host.textContent).toContain('币种 USD')
 })
